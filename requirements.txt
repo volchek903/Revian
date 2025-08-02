@@ -1,0 +1,9 @@
+sqlalchemy
+aiogram
+pydantic
+pydantic_settings
+alembic
+asyncpg
+pytz
+greenlet
+cryptography
