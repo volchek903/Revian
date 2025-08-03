@@ -4,6 +4,8 @@ from app.models.user import User
 import hashlib
 from datetime import datetime
 import pytz
+from datetime import datetime, timedelta
+from sqlalchemy import func
 
 
 def generate_referral_from_user_id(user_id: int | str, length: int = 6) -> str:
@@ -29,6 +31,32 @@ class CRUDUser:
                 select(User).where(User.connection_id == connection_id)
             )
             return result.scalar_one_or_none()
+
+    async def get_user_stats(self):
+        async with get_session() as session:
+            now = datetime.now(pytz.timezone("Europe/Moscow"))
+
+            time_24h = now - timedelta(days=1)
+            time_7d = now - timedelta(days=7)
+            time_30d = now - timedelta(days=30)
+
+            total = await session.execute(select(func.count()).select_from(User))
+            month = await session.execute(
+                select(func.count()).select_from(User).where(User.create_at >= time_30d)
+            )
+            week = await session.execute(
+                select(func.count()).select_from(User).where(User.create_at >= time_7d)
+            )
+            day = await session.execute(
+                select(func.count()).select_from(User).where(User.create_at >= time_24h)
+            )
+
+            return {
+                "total": total.scalar(),
+                "month": month.scalar(),
+                "week": week.scalar(),
+                "day": day.scalar(),
+            }
 
     async def add_user(self, tg_id: str, tg_login: str):
         async with get_session() as session:

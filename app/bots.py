@@ -119,7 +119,6 @@ async def handle_continue_callback(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "welcome_revian")
 async def handle_welcome_revian(callback: types.CallbackQuery):
-    await callback.message.delete()
     await callback.message.answer(
         "У тебя есть пригласительный <b>промокод</b>? 🎁",
         reply_markup=has_referral_kb,
@@ -163,7 +162,6 @@ async def fallback_from_referral(callback: types.CallbackQuery, state: FSMContex
 async def fallback_from_referral(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Без промокода — не проблема 😉")
     await state.clear()
-    await callback.message.delete()
     await callback.message.answer(
         "Ты можешь продолжить пользоваться ботом без промокода.\n\n"
         "🔓 Открываю доступ к возможностям Revian!",
@@ -220,7 +218,7 @@ async def show_support(callback: types.CallbackQuery):
         "🛟 <b>Поддержка</b>\n\n"
         "Если у вас возникли вопросы или проблемы с работой бота — мы всегда на связи!\n\n"
         "📨 Вы можете обратиться в наш официальный Telegram-канал:\n"
-        "<a href='https://t.me/RevianNews'>@RevianNews</a>\n\n"
+        "<a href='https://t.me/Deviar'>@Deviar</a>\n\n"
         "Мы постараемся помочь как можно быстрее 💬",
         parse_mode="HTML",
         disable_web_page_preview=True,
@@ -240,7 +238,7 @@ async def show_about(callback: types.CallbackQuery):
         "— обновления функционала\n"
         "— новости проекта\n"
         "— важные уведомления\n\n"
-        "📢 Канал: <a href='https://t.me/RevianNews'>@RevianNews</a>\n"
+        "📢 Канал: <a href='https://t.me/Deviar'>@Deviar</a>\n"
         "👨‍💻 Разработано: <a href='https://t.me/TeamATechs'>@TeamATech</a>",
         parse_mode="HTML",
         disable_web_page_preview=True,

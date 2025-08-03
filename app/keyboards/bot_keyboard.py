@@ -8,7 +8,11 @@ start_continue_kb = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="➡️ Продолжить", callback_data="start_continue")]
     ]
 )
-
+faq_back_kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к вопросам", callback_data="faq")]
+    ]
+)
 welcome_revian_kb = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -19,6 +23,26 @@ welcome_revian_kb = InlineKeyboardMarkup(
         ]
     ]
 )
+
+
+def generate_faq_kb(items: list[dict]) -> InlineKeyboardMarkup:
+    keyboard = []
+
+    for item in items:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=item["question"], callback_data=f"faq_q_{item['id']}"
+                )
+            ]
+        )
+
+    keyboard.append(
+        [InlineKeyboardButton(text="🔙 Вернуться в меню", callback_data="main_menu")]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 has_referral_kb = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -74,7 +98,11 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     """Главное меню (пока только пункт «Профиль»)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")]
+            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+            [InlineKeyboardButton(text="📘 Инструкция", callback_data="instruction")],
+            [InlineKeyboardButton(text="🧑‍💻 Поддержка", callback_data="support")],
+            [InlineKeyboardButton(text="🧠 О нас", callback_data="about")],
+            [InlineKeyboardButton(text="ℹ️ FAQ", callback_data="faq")],
         ]
     )
 
