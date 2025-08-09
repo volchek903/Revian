@@ -16,6 +16,7 @@ from aiogram import Router, types
 import os
 import json
 from pathlib import Path
+from html import escape as html_escape
 
 router = Router()
 
@@ -28,26 +29,64 @@ async def set_message(message: types.Message) -> None:
 
 
 @router.business_connection()
-async def on_business_connection_change(conn: BusinessConnection):
+async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
     user = conn.user
     user_id = str(user.id)
     connection_id = conn.id
+
     if conn.is_enabled:
         logger.success(f"🤖 Бот подключён к бизнес-аккаунту пользователя {user_id}")
+
+        # Активируем чаты и обновляем connection_id
         await crud_chat.activate_all_by_user_id(user_id)
         await crud_user.update_connection_id(
-            user_id=user_id, connection_id=connection_id
+            user_id=user_id,
+            connection_id=connection_id
         )
+
+        # Приветственное сообщение
+        welcome_text = (
+            "👋 Привет!\n\n"
+            "Я рад, что ты со мной 🤖\n"
+            "Теперь я готов к работе, и больше ни одно твоё сообщение "
+            "не пропадёт незаметно в переписках.\n\n"
+            "📌 Моя задача — отслеживать, сохранять и сообщать тебе "
+            "о любых удалённых или отредактированных сообщениях."
+        )
+        try:
+            await bot.send_message(chat_id=user_id, text=welcome_text)
+        except Exception as e:
+            logger.warning(f"Не удалось отправить приветственное сообщение {user_id}: {e}")
+
     else:
         logger.warning(f"🚫 Бот отключён от бизнес-аккаунта пользователя {user_id}")
+
+        # Деактивируем чаты
         await crud_chat.deactivate_all_by_user_id(user_id)
+
+        # Прощальное сообщение
+        farewell_text = (
+            "😔 Похоже, мы расстаёмся...\n\n"
+            "Я больше не смогу отслеживать твои бизнес-диалоги и "
+            "предупреждать о пропавших сообщениях.\n\n"
+            "Если захочешь вернуться — просто подключи меня снова!"
+        )
+        try:
+            await bot.send_message(chat_id=user_id, text=farewell_text)
+        except Exception as e:
+            logger.warning(f"Не удалось отправить прощальное сообщение {user_id}: {e}")
 
 async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
     reply = message.reply_to_message
     if not reply:
         return
 
-    # Не обрабатываем, если отвечаем на своё же сообщение
+    # ⛔️ Новое: если отвечают на сообщение владельца — не пересылать владельцу его же медиа
+    if reply.from_user and (str(reply.from_user.id) == str(owner_id)):  # CHANGED
+        logger.info("Ответ на сообщение владельца — не пересылаем обратно владельцу.")
+        return
+
+    # (оставил твой кейс) Не обрабатываем, если отвечаем на своё же сообщение
     if reply.from_user and (str(reply.from_user.id) == str(message.from_user.id)):
         logger.info("Ответ на собственное сообщение — пропускаем медиа-обработку.")
         return
@@ -67,7 +106,6 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
         await bot.download_file(tg_file.file_path, destination=buf)
         buf.seek(0)
 
-        # имя файла с расширением из пути
         suffix = Path(tg_file.file_path).suffix or ".jpg"
         photo_file = BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
 
@@ -92,7 +130,6 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
         video_file = BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
 
         try:
-            # Отправляем как видео, явно задаём размеры, чтобы сохранить соотношение
             await bot.send_video(
                 owner_id,
                 video=video_file,
@@ -128,32 +165,33 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
 
 @router.business_message()
 async def handle_business_message(message: types.Message, bot: Bot) -> None:
-    chat_id: str = str(message.chat.id)
-    from_id: str = str(message.from_user.id)
-
-    # Обрабатываем медиа-ответы (с проверкой "не своё" внутри timed_of_file)
-
-    connection_id: str | None = message.business_connection_id
+    # ⛔️ Перенёс наверх: сперва получаем connection_id и владельца
+    connection_id: str | None = message.business_connection_id  # CHANGED (moved up)
     if not connection_id:
         logger.warning("business: business_connection_id отсутствует")
         return
 
-    owner = await crud_user.get_user_by_connection_id(connection_id)
+    owner = await crud_user.get_user_by_connection_id(connection_id)  # CHANGED (now after getting connection_id)
     if not owner:
         logger.error(f"business: не найден пользователь с connection_id={connection_id}")
         return
-    owner_id = owner.tgID
+    owner_id: str = str(owner.tgID)  # CHANGED (ensure str)
 
+    chat_id: str = str(message.chat.id)
+    from_id: str = str(message.from_user.id)
+
+    # Если пишет клиент — обрабатываем медиа-ответы и выходим
     if chat_id != from_id:
-        await media_with_timer(message, bot,owner_id)
+        await media_with_timer(message, bot, owner_id)
         return
+    # Обрабатываем медиа-ответы (с проверкой "не своё" внутри media_with_timer)
 
-    # Сохраняем текст сообщения
+    # Сохраняем текст сообщения владельца (или пустую строку)
     await crud_chat.ensure_chat_exists(chat_id=chat_id, user_id=owner_id)
     encrypted_content = encrypt(message.text or "")
     await crud_message.add_message(
         msg_id=message.message_id,
-        from_user=chat_id,
+        from_user=from_id,       # CHANGED: фактический отправитель, чтобы отличать владельца от клиента
         to_user=owner_id,
         content=encrypted_content,
         m_type="text",
@@ -178,52 +216,82 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
     if not owner:
         logger.error(f"edited: нет user с connection_id={connection_id}")
         return
-    owner_id: str = owner.tgID
+    owner_id: str = str(owner.tgID)
 
+    editor_id: str | None = str(message.from_user.id) if message.from_user else None
+    new_content_raw: str = message.text or message.caption or ""
+    new_content_enc = encrypt(new_content_raw)
+
+    # ===== 1) Если редактирует владелец — обновляем и выходим без уведомлений =====
+    if editor_id == owner_id:
+        try:
+            # Предпочтительно — апдейт по msg_id (если у тебя есть такой метод)
+            if hasattr(crud_message, "update_message_content_by_msg_id"):
+                await crud_message.update_message_content_by_msg_id(
+                    msg_id=msg_id,
+                    new_content=new_content_enc,
+                )
+            else:
+                # Фолбэк: если в БД сообщения владельца хранятся как from_user=owner_id,to_user=owner_id
+                # и/или у тебя нет апдейта по одному msg_id — адаптируй под свою схему.
+                await crud_message.update_message_content(
+                    msg_id=msg_id,
+                    from_user=owner_id,
+                    to_user=owner_id,
+                    new_content=new_content_enc,
+                )
+        except Exception as e:
+            logger.error(f"edited(owner): ошибка апдейта msg_id={msg_id}: {e}")
+        logger.info(f"edited(owner): msg_id={msg_id} обновлён, уведомления не отправлены.")
+        return
+
+    # ===== 2) Редактирует клиент — ищем исходное сообщение клиента =====
     stored_msg = await crud_message.get_message_by_ids(
         msg_id=msg_id,
-        from_user=chat_id,
+        from_user=chat_id,   # у клиентских сообщений from_user == chat_id
         to_user=owner_id,
     )
     if not stored_msg:
-        logger.warning(f"edited: не нашли msg_id={msg_id} в БД")
+        logger.warning(f"edited: не нашли msg_id={msg_id} (client->{owner_id}) в БД")
         return
 
-    client_name: str = message.from_user.full_name
-    client_username: str = message.from_user.username or "—"
-    new_content: str = message.text or message.caption or ""
-    decrypted_old = decrypt(stored_msg.content)
+    old_content_raw = decrypt(stored_msg.content) if stored_msg.content else ""
 
-    try:
-        await bot.send_message(
-            chat_id=owner_id,
-            text=(
-                "⚠️ <b>Отредактировано сообщение</b> ⚠️\n\n"
-                f"👤 <b>Пользователь:</b> {client_name} (@{client_username})\n\n"
-                "<b>💬 До редактирования:</b>\n"
-                f"<code>{decrypted_old}</code>\n\n"
-                "<b>✏️ После редактирования:</b>\n"
-                f"<code>{new_content}</code>"
-            ),
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.warning(f"edited: не смог отправить владельцу {owner_id}: {e}")
+    # если изменений нет — не спамим владельца
+    if (old_content_raw or "") == new_content_raw:
+        logger.info(f"edited: содержимое не изменилось (msg_id={msg_id}) — уведомление не шлём.")
+        return
 
+    # ===== 3) Обновляем БД =====
     try:
         await crud_message.update_message_content(
             msg_id=msg_id,
             from_user=chat_id,
             to_user=owner_id,
-            new_content=encrypt(new_content),
+            new_content=new_content_enc,
         )
-        # logger.info(
-        #     f"✏️ msg_id={msg_id} обновлён | "
-        #     f"{client_name} → owner {owner_id} | "
-        #     f"«{decrypted_old[:30]}…» → «{new_content[:30]}…»"
-        # )
     except Exception as e:
-        logger.error(f"edited: ошибка при обновлении БД для msg_id={msg_id}: {e}")
+        logger.error(f"edited: ошибка обновления БД для msg_id={msg_id}: {e}")
+
+    # ===== 4) Уведомляем владельца о правке клиента =====
+    client_name: str = (message.from_user.full_name if message.from_user else "Клиент")
+    client_username: str = (message.from_user.username if message.from_user and message.from_user.username else "—")
+
+    try:
+        await bot.send_message(
+            chat_id=owner_id,
+            text=(
+                "⚠️ <b>Отредактировано сообщение</b>\n\n"
+                f"👤 <b>Пользователь:</b> {html_escape(client_name)} (@{html_escape(client_username)})\n\n"
+                "<b>💬 До редактирования:</b>\n"
+                f"<code>{html_escape(old_content_raw)}</code>\n\n"
+                "<b>✏️ После редактирования:</b>\n"
+                f"<code>{html_escape(new_content_raw)}</code>"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning(f"edited: не смог отправить владельцу {owner_id}: {e}")
 
 
 @router.deleted_business_messages()
@@ -242,12 +310,12 @@ async def deleted_business_message(
     if not owner:
         logger.error(f"deleted: нет user c connection_id={connection_id}")
         return
-    owner_id: str = owner.tgID
+    owner_id: str = str(owner.tgID)  # ← всегда строка
 
     try:
         client_chat = await bot.get_chat(chat_id)
         client_name = (
-            f"{client_chat.first_name or ''} {client_chat.last_name or ''}".strip()
+            f"{client_chat.first_name or ''} {client_chat.last_name or ''}".strip() or "Клиент"
         )
         client_username = client_chat.username or "—"
     except Exception:
@@ -264,23 +332,36 @@ async def deleted_business_message(
             logger.warning(f"deleted: msg_id={msg_id} не найден в БД")
             continue
 
-        decrypted = decrypt(stored_msg.content)
+        # ⛔ не уведомляем, если удалено сообщение владельца
+        try:
+            if str(getattr(stored_msg, "from_user", "")) == owner_id:
+                logger.info(f"deleted: msg_id={msg_id} — удалено сообщение владельца, пропускаем уведомление.")
+                continue
+        except Exception:
+            # если в записи нет поля from_user — просто продолжаем обычный флоу
+            pass
+
+        decrypted = decrypt(stored_msg.content) if getattr(stored_msg, "content", None) else ""
+        decrypted_safe = html_escape(decrypted)
+
+        # не шлём пустые «удалённые» уведомления
+        if decrypted_safe.strip() == "":
+            logger.info(f"deleted: msg_id={msg_id} — пустое содержимое, уведомление не отправляем.")
+            continue
 
         try:
             await bot.send_message(
                 chat_id=owner_id,
                 text=(
-                    "🚨 <b>Зафиксировано удаление сообщения</b> 🚨\n\n"
-                    f"<b>👤 Пользователь:</b> {client_name} (@{client_username})\n\n"
+                    "🚨 <b>Зафиксировано удаление сообщения</b>\n\n"
+                    f"<b>👤 Пользователь:</b> {html_escape(client_name)} (@{html_escape(client_username)})\n\n"
                     "<b>🗑 Удалённое сообщение:</b>\n"
-                    f"<code>{decrypted}</code>"
+                    f"<code>{decrypted_safe}</code>"
                 ),
                 parse_mode="HTML",
             )
         except Exception as e:
             logger.warning(f"deleted: не смог отправить владельцу {owner_id}: {e}")
-
-        # logger.info(f"🗑 Уведомили owner={owner_id} об удалении msg_id={msg_id}")
 
 
 async def send_private_message(bot: Bot, user_id: int, text: str) -> None:
