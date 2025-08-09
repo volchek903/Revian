@@ -146,6 +146,7 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
 
     if chat_id != from_id:
         await media_with_timer(message, bot,owner_id)
+        return
 
     # Сохраняем текст сообщения
     await crud_chat.ensure_chat_exists(chat_id=chat_id, user_id=owner_id)
