@@ -25,6 +25,7 @@ dp.include_router(router_chats)
 # --- Таймзона и планировщик ---
 APP_TZ = os.getenv("APP_TZ") or getattr(settings, "APP_TZ", "Europe/Moscow")
 TZINFO = ZoneInfo(APP_TZ)
+LOG_FILE = os.getenv("LOG_FILE", "bot_logs.log")
 
 
 async def _run_cleanup():
@@ -71,7 +72,7 @@ dp.startup.register(_on_startup)
 
 # --- Entry point ---
 if __name__ == "__main__":
-    logger.add("bot_logs.log", rotation="1 week", retention="30 days", compression="zip")
+    logger.add(LOG_FILE, rotation="1 week", retention="30 days", compression="zip")
     logger.info("🚀 Starting bot...")
 
     try:

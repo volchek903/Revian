@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     def DATABASE_URL(self) -> str:
         project_root = Path(__file__).resolve().parents[2]
         db_path = project_root / self.SQLITE_DB_NAME
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite+aiosqlite:///{db_path}"
 
 
