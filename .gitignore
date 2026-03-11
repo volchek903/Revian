@@ -11,4 +11,11 @@ env/
 
 # Logs
 *.log
+*.log.*
+*.zip
 logs/
+
+# SQLite databases
+*.sqlite3
+*.db
+storage/
