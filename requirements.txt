@@ -1,9 +1,9 @@
 sqlalchemy
+aiosqlite
 aiogram
 pydantic
 pydantic_settings
 alembic
-asyncpg
 pytz
 greenlet
 cryptography

@@ -1,5 +1,6 @@
 from app.core.db import Base
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.sql import func
 
 
 class Message(Base):
@@ -10,3 +11,8 @@ class Message(Base):
     to_user = Column(String, nullable=False, default="False")
     content = Column(String, nullable=False, default="False")
     type = Column(String, nullable=False, default="False")
+    create_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),  # ✅ БД сама проставит текущий timestamp
+        nullable=False,
+    )

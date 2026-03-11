@@ -1,8 +1,10 @@
 # app/repository/message.py
-from sqlalchemy import insert
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import delete, insert, select, update
+
 from app.core.db import get_session
-from app.models.message import Message  # твоя модель
-from sqlalchemy import select, update
+from app.models.message import Message
 
 
 class CRUDMessage:
@@ -16,7 +18,7 @@ class CRUDMessage:
     ):
         async with get_session() as session:
             stmt = insert(Message).values(
-                msg_id=str(msg_id),  # храним как строку (у тебя Column(String))
+                msg_id=str(msg_id),
                 from_user=from_user,
                 to_user=to_user,
                 content=content,
@@ -53,6 +55,22 @@ class CRUDMessage:
             )
             await session.execute(stmt)
             await session.commit()
+
+    async def delete_messages_older_than(self, days: int = 30) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+
+        async with get_session() as session:
+            rows = await session.execute(
+                select(Message.id).where(Message.create_at < cutoff)
+            )
+            ids_to_delete = [row[0] for row in rows.fetchall()]
+
+            if not ids_to_delete:
+                return 0
+
+            await session.execute(delete(Message).where(Message.id.in_(ids_to_delete)))
+            await session.commit()
+            return len(ids_to_delete)
 
 
 crud_message = CRUDMessage()
