@@ -1,24 +1,21 @@
 import asyncio
-from aiogram import F, Bot, Dispatcher, types, exceptions, Router
-from loguru import logger
-from aiogram.types import Update, BusinessConnection
-import json
-from aiogram.enums import UpdateType
-from aiogram.types import Update, BusinessConnection, FSInputFile,BufferedInputFile
-from io import BytesIO
-from pathlib import Path
-from aiogram.exceptions import TelegramForbiddenError
-from app.repository.chat import crud_chat
-from app.repository.user import crud_user
-from app.repository.message import crud_message
-from app.utils.encription import encrypt, decrypt
-from aiogram import Router, types
-import os
-import json
-from pathlib import Path
 from html import escape as html_escape
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram import Bot, Router, types
+from aiogram.types import BufferedInputFile, BusinessConnection
+from io import BytesIO
+from loguru import logger
+from pathlib import Path
+
+from app.core.config import settings
+from app.repository.chat import crud_chat
+from app.repository.message import crud_message
+from app.repository.user import crud_user
+from app.utils.encription import encrypt, decrypt
 
 router = Router()
+MEDIA_DOWNLOAD_SEMAPHORE = asyncio.Semaphore(settings.MEDIA_DOWNLOAD_CONCURRENCY)
+MAX_MEDIA_SIZE_BYTES = settings.MAX_MEDIA_SIZE_MB * 1024 * 1024
 
 
 async def set_message(message: types.Message) -> None:
@@ -26,6 +23,30 @@ async def set_message(message: types.Message) -> None:
         logger.info(f"Сообщение сохранено: {message.chat.id}:{message.message_id}")
     except Exception as e:
         logger.error(f"Ошибка при сохранении сообщения: {e}")
+
+
+def _format_bytes(size_bytes: int) -> str:
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _media_size_is_too_large(size_bytes: int | None) -> bool:
+    return size_bytes is not None and size_bytes > MAX_MEDIA_SIZE_BYTES
+
+
+async def _download_media(
+    bot: Bot,
+    *,
+    file_id: str,
+    file_path_hint: str | None,
+) -> BufferedInputFile:
+    async with MEDIA_DOWNLOAD_SEMAPHORE:
+        tg_file = await bot.get_file(file_id)
+        buf = BytesIO()
+        await bot.download_file(tg_file.file_path, destination=buf)
+        buf.seek(0)
+
+        suffix = Path(file_path_hint or tg_file.file_path).suffix or ".bin"
+        return BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
 
 
 @router.business_connection()
@@ -81,12 +102,10 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
     if not reply:
         return
 
-    # ⛔️ Новое: если отвечают на сообщение владельца — не пересылать владельцу его же медиа
-    if reply.from_user and (str(reply.from_user.id) == str(owner_id)):  # CHANGED
+    if reply.from_user and (str(reply.from_user.id) == str(owner_id)):
         logger.info("Ответ на сообщение владельца — не пересылаем обратно владельцу.")
         return
 
-    # (оставил твой кейс) Не обрабатываем, если отвечаем на своё же сообщение
     if reply.from_user and (str(reply.from_user.id) == str(message.from_user.id)):
         logger.info("Ответ на собственное сообщение — пропускаем медиа-обработку.")
         return
@@ -100,14 +119,21 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
     # Фото (максимальный размер)
     if reply.photo:
         file_id = reply.photo[-1].file_id
-        tg_file = await bot.get_file(file_id)
+        file_size = getattr(reply.photo[-1], "file_size", None)
+        if _media_size_is_too_large(file_size):
+            logger.warning(
+                "media: skip protected photo for owner_id={}, size={} exceeds limit={}",
+                owner_id,
+                _format_bytes(file_size),
+                _format_bytes(MAX_MEDIA_SIZE_BYTES),
+            )
+            return
 
-        buf = BytesIO()
-        await bot.download_file(tg_file.file_path, destination=buf)
-        buf.seek(0)
-
-        suffix = Path(tg_file.file_path).suffix or ".jpg"
-        photo_file = BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
+        photo_file = await _download_media(
+            bot,
+            file_id=file_id,
+            file_path_hint=getattr(reply.photo[-1], "file_path", None),
+        )
 
         try:
             await bot.send_photo(owner_id, photo=photo_file)
@@ -119,15 +145,21 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
         file_id = reply.video.file_id
         width = reply.video.width
         height = reply.video.height
+        file_size = getattr(reply.video, "file_size", None)
+        if _media_size_is_too_large(file_size):
+            logger.warning(
+                "media: skip protected video for owner_id={}, size={} exceeds limit={}",
+                owner_id,
+                _format_bytes(file_size),
+                _format_bytes(MAX_MEDIA_SIZE_BYTES),
+            )
+            return
 
-        tg_file = await bot.get_file(file_id)
-
-        buf = BytesIO()
-        await bot.download_file(tg_file.file_path, destination=buf)
-        buf.seek(0)
-
-        suffix = Path(tg_file.file_path).suffix or ".mp4"
-        video_file = BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
+        video_file = await _download_media(
+            bot,
+            file_id=file_id,
+            file_path_hint=getattr(reply.video, "file_name", None),
+        )
 
         try:
             await bot.send_video(
@@ -143,14 +175,21 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
     # Кружок (video_note)
     elif reply.video_note:
         file_id = reply.video_note.file_id
-        tg_file = await bot.get_file(file_id)
+        file_size = getattr(reply.video_note, "file_size", None)
+        if _media_size_is_too_large(file_size):
+            logger.warning(
+                "media: skip protected video note for owner_id={}, size={} exceeds limit={}",
+                owner_id,
+                _format_bytes(file_size),
+                _format_bytes(MAX_MEDIA_SIZE_BYTES),
+            )
+            return
 
-        buf = BytesIO()
-        await bot.download_file(tg_file.file_path, destination=buf)
-        buf.seek(0)
-
-        suffix = Path(tg_file.file_path).suffix or ".mp4"
-        note_file = BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
+        note_file = await _download_media(
+            bot,
+            file_id=file_id,
+            file_path_hint=None,
+        )
 
         try:
             await bot.send_video_note(owner_id, video_note=note_file)
@@ -161,45 +200,39 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
         logger.info("Защищённое сообщение без фото/видео/video_note — пропущено.")
         return
 
-
-
 @router.business_message()
 async def handle_business_message(message: types.Message, bot: Bot) -> None:
-    # ⛔️ Перенёс наверх: сперва получаем connection_id и владельца
-    connection_id: str | None = message.business_connection_id  # CHANGED (moved up)
+    connection_id: str | None = message.business_connection_id
     if not connection_id:
         logger.warning("business: business_connection_id отсутствует")
         return
 
-    owner = await crud_user.get_user_by_connection_id(connection_id)  # CHANGED (now after getting connection_id)
+    owner = await crud_user.get_user_by_connection_id(connection_id)
     if not owner:
         logger.error(f"business: не найден пользователь с connection_id={connection_id}")
         return
-    owner_id: str = str(owner.tgID)  # CHANGED (ensure str)
+    owner_id: str = str(owner.tgID)
 
     chat_id: str = str(message.chat.id)
+    if not message.from_user:
+        logger.warning(f"business: message.from_user отсутствует для chat_id={chat_id}")
+        return
     from_id: str = str(message.from_user.id)
 
     # Если пишет клиент — обрабатываем медиа-ответы и выходим
     if chat_id != from_id:
         await media_with_timer(message, bot, owner_id)
         return
-    # Обрабатываем медиа-ответы (с проверкой "не своё" внутри media_with_timer)
 
-    # Сохраняем текст сообщения владельца (или пустую строку)
     await crud_chat.ensure_chat_exists(chat_id=chat_id, user_id=owner_id)
     encrypted_content = encrypt(message.text or "")
     await crud_message.add_message(
         msg_id=message.message_id,
-        from_user=from_id,       # CHANGED: фактический отправитель, чтобы отличать владельца от клиента
+        from_user=from_id,
         to_user=owner_id,
         content=encrypted_content,
         m_type="text",
     )
-    # logger.info(
-    #     f"💾 Сохранено сообщение {message.message_id} "
-    #     f"от клиента {chat_id} владельцу {owner_id}"
-    # )
 
 
 @router.edited_business_message()

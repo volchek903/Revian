@@ -1,16 +1,13 @@
-from aiogram import Router, F, types, Bot
-from app.core.config import settings
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Router, F, types
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from app.repository.user import crud_user
 from aiogram.utils.markdown import hbold
-from app.keyboards.bot_keyboard import *
-from app.utils.faq_data import faq_items
 import asyncio
 
-bot = Bot(token=settings.BOT_TOKEN)
+from app.keyboards.bot_keyboard import *
+from app.repository.user import crud_user
+from app.utils.faq_data import faq_items
+
 router = Router()
 
 Admin = "830091750"
@@ -97,7 +94,7 @@ async def handle_continue_callback(callback: types.CallbackQuery):
     await callback.answer("✅ Продолжаем", show_alert=False)
     await callback.message.delete()
 
-    await bot.send_message(
+    await callback.bot.send_message(
         chat_id=callback.message.chat.id,
         text=f"<b>🔧 Как подключить Revian к бизнес-аккаунту Telegram:</b>\n\n"
         "1️⃣ Перейди в настройки своего бизнес-аккаунта Telegram.\n"

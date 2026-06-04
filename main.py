@@ -1,8 +1,8 @@
 from loguru import logger
-import sys
-import os
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
+import sys
 from zoneinfo import ZoneInfo
 
 from aiogram import Dispatcher, Bot
@@ -23,9 +23,18 @@ dp.include_router(router_bots)
 dp.include_router(router_chats)
 
 # --- Таймзона и планировщик ---
-APP_TZ = os.getenv("APP_TZ") or getattr(settings, "APP_TZ", "Europe/Moscow")
+APP_TZ = settings.APP_TZ
 TZINFO = ZoneInfo(APP_TZ)
-LOG_FILE = os.getenv("LOG_FILE", "bot_logs.log")
+LOG_FILE = settings.LOG_FILE
+POLLING_TASKS_LIMIT = settings.POLLING_TASKS_LIMIT
+
+cleanup_task: asyncio.Task | None = None
+
+
+def _ensure_runtime_dirs() -> None:
+    log_path = Path(LOG_FILE)
+    if log_path.parent != Path("."):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 async def _run_cleanup():
@@ -37,7 +46,6 @@ async def _run_cleanup():
 
 
 async def _daily_cleanup_worker(hour: int = 19, minute: int = 24, run_on_start: bool = False):
-    # Выполнить сразу при старте (по желанию)
     if run_on_start:
         await _run_cleanup()
 
@@ -49,34 +57,79 @@ async def _daily_cleanup_worker(hour: int = 19, minute: int = 24, run_on_start: 
 
         sleep_s = max(0, (next_run - now).total_seconds())
         logger.info(f"⏰ Cleanup scheduled: now={now}, next_run={next_run}, tz={APP_TZ}, sleep={int(sleep_s)}s")
-        await asyncio.sleep(sleep_s)
+        try:
+            await asyncio.sleep(sleep_s)
+        except asyncio.CancelledError:
+            logger.info("🛑 Cleanup worker stopped")
+            raise
 
         await _run_cleanup()
 
 
 # --- Startup / Shutdown хуки ---
 async def _on_startup():
+    global cleanup_task
+
     await init_db()
     me = await bot.get_me()
     logger.info(
         f"🤖 Bot started: {me.full_name} (@{me.username}), id={me.id}"
     )
-    # Снимаем webhook перед polling, чтобы не было конфликта getUpdates
     await bot.delete_webhook(drop_pending_updates=True)
-    # Запускаем ежедневный воркер на 19:24 по выбранной таймзоне
-    asyncio.create_task(_daily_cleanup_worker(hour=0, minute=0, run_on_start=False))
-    logger.info(f"✅ Scheduler: daily cleanup at 19:24 ({APP_TZ}). Webhook disabled for polling.")
+    cleanup_task = asyncio.create_task(
+        _daily_cleanup_worker(
+            hour=settings.CLEANUP_HOUR,
+            minute=settings.CLEANUP_MINUTE,
+            run_on_start=settings.RUN_CLEANUP_ON_START,
+        ),
+        name="daily-cleanup-worker",
+    )
+    logger.info(
+        "✅ Scheduler: daily cleanup at "
+        f"{settings.CLEANUP_HOUR:02d}:{settings.CLEANUP_MINUTE:02d} ({APP_TZ}). "
+        f"Webhook disabled for polling. tasks_limit={POLLING_TASKS_LIMIT}"
+    )
+
+
+async def _on_shutdown():
+    global cleanup_task
+
+    if cleanup_task is None:
+        return
+
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        cleanup_task = None
+    logger.info("👋 Bot shutdown complete")
 
 
 dp.startup.register(_on_startup)
+dp.shutdown.register(_on_shutdown)
 
 # --- Entry point ---
 if __name__ == "__main__":
-    logger.add(LOG_FILE, rotation="1 week", retention="30 days", compression="zip")
+    _ensure_runtime_dirs()
+    logger.add(
+        LOG_FILE,
+        rotation="1 week",
+        retention="30 days",
+        compression="zip",
+        enqueue=True,
+        backtrace=True,
+        diagnose=False,
+    )
     logger.info("🚀 Starting bot...")
 
     try:
-        dp.run_polling(bot)
+        dp.run_polling(
+            bot,
+            allowed_updates=dp.resolve_used_update_types(),
+            tasks_concurrency_limit=POLLING_TASKS_LIMIT,
+        )
     except TelegramConflictError:
         logger.error("❌ Conflict: другой процесс уже вызывает getUpdates этим токеном. Останови его или удали webhook.")
         sys.exit(2)

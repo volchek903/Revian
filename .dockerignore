@@ -1,5 +1,6 @@
 .git
 .gitignore
+.env
 __pycache__/
 *.pyc
 *.pyo
@@ -16,5 +17,7 @@ env/
 htmlcov/
 *.log
 *.zip
+logs/
+storage/
 alembic/versions/__pycache__/
 revian.sqlite3

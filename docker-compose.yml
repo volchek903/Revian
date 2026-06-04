@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: revian-bot
+    init: true
     restart: unless-stopped
     env_file:
       - .env
@@ -11,10 +12,15 @@ services:
       APP_TZ: Europe/Moscow
       SQLITE_DB_NAME: storage/revian.sqlite3
       LOG_FILE: logs/bot_logs.log
+      CLEANUP_HOUR: 19
+      CLEANUP_MINUTE: 24
+      RUN_CLEANUP_ON_START: "false"
+      POLLING_TASKS_LIMIT: 8
+      MEDIA_DOWNLOAD_CONCURRENCY: 2
+      MAX_MEDIA_SIZE_MB: 20
     volumes:
       - revian_storage:/app/storage
       - revian_logs:/app/logs
-    command: ["python", "main.py"]
 
 volumes:
   revian_storage:
