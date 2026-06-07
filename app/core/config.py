@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     POLLING_TASKS_LIMIT: int = Field(default=8, ge=1)
     MEDIA_DOWNLOAD_CONCURRENCY: int = Field(default=2, ge=1)
     MAX_MEDIA_SIZE_MB: int = Field(default=20, ge=1)
+    TELEGRAM_STARTUP_TIMEOUT_SEC: int = Field(default=30, ge=1)
+    TELEGRAM_STARTUP_RETRY_DELAY_SEC: int = Field(default=5, ge=1)
+    TELEGRAM_STARTUP_RETRY_MAX_DELAY_SEC: int = Field(default=60, ge=1)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
