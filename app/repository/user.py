@@ -15,6 +15,11 @@ def generate_referral_from_user_id(user_id: int | str, length: int = 6) -> str:
 
 class CRUDUser:
 
+    async def get_user_by_tg_id(self, tg_id: str):
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.tgID == tg_id))
+            return result.scalar_one_or_none()
+
     async def update_connection_id(self, user_id: str, connection_id: str):
         async with get_session() as session:
             stmt = (

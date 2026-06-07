@@ -19,9 +19,5 @@ services:
       MEDIA_DOWNLOAD_CONCURRENCY: 2
       MAX_MEDIA_SIZE_MB: 20
     volumes:
-      - revian_storage:/app/storage
-      - revian_logs:/app/logs
-
-volumes:
-  revian_storage:
-  revian_logs:
+      - ./revian.sqlite3:/app/storage/revian.sqlite3
+      - ./logs:/app/logs

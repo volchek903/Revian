@@ -4,6 +4,11 @@ from app.core.db import get_session
 
 
 class CRUDChat:
+    async def get_chat_by_chat_id(self, chat_id: str) -> Chat | None:
+        async with get_session() as session:
+            result = await session.execute(select(Chat).where(Chat.chat_id == chat_id))
+            return result.scalar_one_or_none()
+
     async def ensure_chat_exists(self, chat_id: str, user_id: str) -> None:
         """
         Если строки в chats нет — создаём со status=True.

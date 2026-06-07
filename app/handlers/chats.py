@@ -49,6 +49,61 @@ async def _download_media(
         return BufferedInputFile(buf.getvalue(), filename=f"{file_id}{suffix}")
 
 
+async def _resolve_owner(
+    *,
+    connection_id: str | None,
+    chat_id: str,
+    sender_id: str | None = None,
+):
+    owner = None
+
+    if connection_id:
+        owner = await crud_user.get_user_by_connection_id(connection_id)
+        if owner:
+            return owner
+        logger.warning(
+            f"business: connection_id={connection_id} not found, trying fallback resolution for chat_id={chat_id}"
+        )
+
+    owner = await crud_user.get_user_by_tg_id(chat_id)
+    if owner:
+        if connection_id and owner.connection_id != connection_id:
+            await crud_user.update_connection_id(str(owner.tgID), connection_id)
+            owner.connection_id = connection_id
+            logger.info(
+                f"business: refreshed connection_id for owner_id={owner.tgID} via direct user match"
+            )
+        return owner
+
+    if sender_id:
+        owner = await crud_user.get_user_by_tg_id(sender_id)
+        if owner:
+            if connection_id and owner.connection_id != connection_id:
+                await crud_user.update_connection_id(str(owner.tgID), connection_id)
+                owner.connection_id = connection_id
+                logger.info(
+                    f"business: refreshed connection_id for owner_id={owner.tgID} via sender_id={sender_id}"
+                )
+            return owner
+
+    chat = await crud_chat.get_chat_by_chat_id(chat_id)
+    if not chat:
+        return None
+
+    owner = await crud_user.get_user_by_tg_id(str(chat.user_id))
+    if not owner:
+        return None
+
+    if connection_id and owner.connection_id != connection_id:
+        await crud_user.update_connection_id(str(owner.tgID), connection_id)
+        owner.connection_id = connection_id
+        logger.info(
+            f"business: refreshed connection_id for owner_id={owner.tgID} via chat_id={chat_id}"
+        )
+
+    return owner
+
+
 @router.business_connection()
 async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
     user = conn.user
@@ -203,21 +258,24 @@ async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
 @router.business_message()
 async def handle_business_message(message: types.Message, bot: Bot) -> None:
     connection_id: str | None = message.business_connection_id
-    if not connection_id:
-        logger.warning("business: business_connection_id отсутствует")
-        return
-
-    owner = await crud_user.get_user_by_connection_id(connection_id)
-    if not owner:
-        logger.error(f"business: не найден пользователь с connection_id={connection_id}")
-        return
-    owner_id: str = str(owner.tgID)
-
     chat_id: str = str(message.chat.id)
     if not message.from_user:
         logger.warning(f"business: message.from_user отсутствует для chat_id={chat_id}")
         return
     from_id: str = str(message.from_user.id)
+
+    if not connection_id:
+        logger.warning(f"business: business_connection_id отсутствует для chat_id={chat_id}")
+
+    owner = await _resolve_owner(
+        connection_id=connection_id,
+        chat_id=chat_id,
+        sender_id=from_id,
+    )
+    if not owner:
+        logger.error(f"business: не найден пользователь с connection_id={connection_id}")
+        return
+    owner_id: str = str(owner.tgID)
 
     # Если пишет клиент — обрабатываем медиа-ответы и выходим
     if chat_id != from_id:
@@ -240,18 +298,23 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
     chat_id: str = str(message.chat.id)
     msg_id: str = str(message.message_id)
     connection_id: str | None = message.business_connection_id
+    editor_id: str | None = str(message.from_user.id) if message.from_user else None
 
     if not connection_id:
-        logger.warning("edited: business_connection_id отсутствует")
-        return
+        logger.warning(f"edited: business_connection_id отсутствует для chat_id={chat_id}")
 
-    owner = await crud_user.get_user_by_connection_id(connection_id)
+    owner = await _resolve_owner(
+        connection_id=connection_id,
+        chat_id=chat_id,
+        sender_id=editor_id,
+    )
     if not owner:
-        logger.error(f"edited: нет user с connection_id={connection_id}")
+        logger.error(
+            f"edited: нет user с connection_id={connection_id} и chat_id={chat_id}"
+        )
         return
     owner_id: str = str(owner.tgID)
 
-    editor_id: str | None = str(message.from_user.id) if message.from_user else None
     new_content_raw: str = message.text or message.caption or ""
     new_content_enc = encrypt(new_content_raw)
 
@@ -336,12 +399,13 @@ async def deleted_business_message(
     msg_ids: list[str] = [str(mid) for mid in event.message_ids]
 
     if not connection_id:
-        logger.warning("deleted: business_connection_id отсутствует")
-        return
+        logger.warning(f"deleted: business_connection_id отсутствует для chat_id={chat_id}")
 
-    owner = await crud_user.get_user_by_connection_id(connection_id)
+    owner = await _resolve_owner(connection_id=connection_id, chat_id=chat_id)
     if not owner:
-        logger.error(f"deleted: нет user c connection_id={connection_id}")
+        logger.error(
+            f"deleted: нет user c connection_id={connection_id} и chat_id={chat_id}"
+        )
         return
     owner_id: str = str(owner.tgID)  # ← всегда строка
 
