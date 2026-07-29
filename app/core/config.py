@@ -10,9 +10,10 @@ class Settings(BaseSettings):
     SQLITE_DB_NAME: str = "revian.sqlite3"
     APP_TZ: str = "Europe/Moscow"
     LOG_FILE: str = "bot_logs.log"
+    MESSAGE_RETENTION_DAYS: int = Field(default=3, ge=1)
     CLEANUP_HOUR: int = Field(default=19, ge=0, le=23)
     CLEANUP_MINUTE: int = Field(default=24, ge=0, le=59)
-    RUN_CLEANUP_ON_START: bool = False
+    RUN_CLEANUP_ON_START: bool = True
     POLLING_TASKS_LIMIT: int = Field(default=8, ge=1)
     MEDIA_DOWNLOAD_CONCURRENCY: int = Field(default=2, ge=1)
     MAX_MEDIA_SIZE_MB: int = Field(default=20, ge=1)

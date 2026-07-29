@@ -1,6 +1,7 @@
 from loguru import logger
 import asyncio
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
@@ -14,7 +15,29 @@ from app.core.config import settings
 from app.core.db import init_db
 from app.handlers.chats import router as router_chats
 from app.handlers.bots import router as router_bots
-from app.repository.message import crud_message  # метод delete_messages_older_than(days=30)
+from app.repository.message import crud_message
+
+
+def _disable_proxy_env() -> None:
+    proxy_vars = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    )
+    removed = []
+
+    for var_name in proxy_vars:
+        if os.environ.pop(var_name, None) is not None:
+            removed.append(var_name)
+
+    if removed:
+        logger.info(f"🔌 Proxy env disabled: {', '.join(removed)}")
+
+
+_disable_proxy_env()
 
 # --- Bot / Dispatcher ---
 bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -26,6 +49,7 @@ dp.include_router(router_chats)
 APP_TZ = settings.APP_TZ
 TZINFO = ZoneInfo(APP_TZ)
 LOG_FILE = settings.LOG_FILE
+MESSAGE_RETENTION_DAYS = settings.MESSAGE_RETENTION_DAYS
 POLLING_TASKS_LIMIT = settings.POLLING_TASKS_LIMIT
 TELEGRAM_STARTUP_TIMEOUT_SEC = settings.TELEGRAM_STARTUP_TIMEOUT_SEC
 TELEGRAM_STARTUP_RETRY_DELAY_SEC = settings.TELEGRAM_STARTUP_RETRY_DELAY_SEC
@@ -42,8 +66,12 @@ def _ensure_runtime_dirs() -> None:
 
 async def _run_cleanup():
     try:
-        deleted = await crud_message.delete_messages_older_than(days=30)
-        logger.info(f"🧹 Purge: deleted {deleted} messages older than 30 days")
+        deleted = await crud_message.delete_messages_older_than(
+            days=MESSAGE_RETENTION_DAYS
+        )
+        logger.info(
+            f"🧹 Purge: deleted {deleted} messages older than {MESSAGE_RETENTION_DAYS} days"
+        )
     except Exception:
         logger.exception("❌ Purge failed")
 
@@ -92,6 +120,8 @@ async def _on_startup():
     global cleanup_task
 
     await init_db()
+    if settings.RUN_CLEANUP_ON_START:
+        await _run_cleanup()
     me = await _call_telegram_api_with_retry("get_me", bot.get_me)
     logger.info(
         f"🤖 Bot started: {me.full_name} (@{me.username}), id={me.id}"
@@ -105,13 +135,14 @@ async def _on_startup():
         _daily_cleanup_worker(
             hour=settings.CLEANUP_HOUR,
             minute=settings.CLEANUP_MINUTE,
-            run_on_start=settings.RUN_CLEANUP_ON_START,
+            run_on_start=False,
         ),
         name="daily-cleanup-worker",
     )
     logger.info(
         "✅ Scheduler: daily cleanup at "
         f"{settings.CLEANUP_HOUR:02d}:{settings.CLEANUP_MINUTE:02d} ({APP_TZ}). "
+        f"retention={MESSAGE_RETENTION_DAYS}d. "
         f"Webhook disabled for polling. tasks_limit={POLLING_TASKS_LIMIT}"
     )
 

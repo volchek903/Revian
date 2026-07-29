@@ -1,26 +1,64 @@
-# app/keyboards/bot_keyboard.py
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# ────────── статические клавиатуры (создаются один раз) ──────────
 
 start_continue_kb = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="➡️ Продолжить", callback_data="start_continue")]
+        [InlineKeyboardButton(text="✨ Начать настройку", callback_data="start_continue")]
     ]
 )
+
 faq_back_kb = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад к вопросам", callback_data="faq")]
+        [
+            InlineKeyboardButton(text="◀️ К вопросам", callback_data="faq"),
+            InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu"),
+        ]
     ]
 )
+
 welcome_revian_kb = InlineKeyboardMarkup(
     inline_keyboard=[
         [
+            InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="has_referral")
+        ],
+        [
             InlineKeyboardButton(
-                text="🚀 Добро пожаловать к Revian",
-                callback_data="welcome_revian",
+                text="➡️ Продолжить без промокода",
+                callback_data="no_referral",
             )
-        ]
+        ],
+    ]
+)
+
+has_referral_kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="has_referral")
+        ],
+        [
+            InlineKeyboardButton(
+                text="➡️ Продолжить без промокода",
+                callback_data="no_referral",
+            )
+        ],
+    ]
+)
+
+no_referral_from_has_kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="➡️ Продолжить без промокода",
+                callback_data="no_referral",
+            )
+        ],
+        [InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")],
+    ]
+)
+
+next_to_menu_kb = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Открыть главное меню", callback_data="main_menu")]
     ]
 )
 
@@ -32,100 +70,140 @@ def generate_faq_kb(items: list[dict]) -> InlineKeyboardMarkup:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=item["question"], callback_data=f"faq_q_{item['id']}"
+                    text=item.get("button", item["question"]),
+                    callback_data=f"faq_q_{item['id']}",
                 )
             ]
         )
 
     keyboard.append(
-        [InlineKeyboardButton(text="🔙 Вернуться в меню", callback_data="main_menu")]
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
     )
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-has_referral_kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Есть", callback_data="has_referral"),
-            InlineKeyboardButton(text="❌ Нет", callback_data="no_referral"),
-        ]
-    ]
-)
-
-no_referral_from_has_kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="↩️ Ошибся, промокода нет",
-                callback_data="no_referral_from_has",
-            )
-        ]
-    ]
-)
-
-next_to_menu_kb = InlineKeyboardMarkup(
-    inline_keyboard=[[InlineKeyboardButton(text="➡️ Далее", callback_data="main_menu")]]
-)
-
-# ────────── динамические клавиатуры (функции создают экземпляр при вызове) ──────────
-
-
 def back_to_choice_kb() -> InlineKeyboardMarkup:
-    """Кнопка «Ошибся, промокода нет» — возвращает к выбору промокода."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Ошибся, промокода нет",
-                    callback_data="no_referral_from_has",
+                    text="🎟 Ввести промокод",
+                    callback_data="has_referral",
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="➡️ Продолжить без промокода",
+                    callback_data="no_referral",
+                )
+            ],
         ]
     )
 
 
 def menu_kb() -> InlineKeyboardMarkup:
-    """Простая кнопка, ведущая в главное меню."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")]
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
         ]
     )
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
-    """Главное меню (пока только пункт «Профиль»)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-            [InlineKeyboardButton(text="📘 Инструкция", callback_data="instruction")],
-            [InlineKeyboardButton(text="🧑‍💻 Поддержка", callback_data="support")],
-            [InlineKeyboardButton(text="🧠 О нас", callback_data="about")],
-            [InlineKeyboardButton(text="ℹ️ FAQ", callback_data="faq")],
+            [
+                InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+                InlineKeyboardButton(text="🎁 Промокод", callback_data="has_referral"),
+            ],
+            [
+                InlineKeyboardButton(text="📘 Подключение", callback_data="instruction"),
+                InlineKeyboardButton(text="❓ FAQ", callback_data="faq"),
+            ],
+            [
+                InlineKeyboardButton(text="🛟 Поддержка", callback_data="support"),
+                InlineKeyboardButton(text="ℹ️ О проекте", callback_data="about"),
+            ],
+        ]
+    )
+
+
+def instruction_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎟 Ввести промокод",
+                    callback_data="has_referral",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def profile_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎟 Активировать промокод",
+                    callback_data="has_referral",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def support_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📢 Канал Revian",
+                    url="https://t.me/RevianNews",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def about_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📢 Новости",
+                    url="https://t.me/RevianNews",
+                ),
+                InlineKeyboardButton(
+                    text="👨‍💻 Команда",
+                    url="https://t.me/TeamATechs",
+                ),
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]
     )
 
 
 def retry_kb() -> InlineKeyboardMarkup:
-    """
-    Клавиатура для повторного ввода промокода:
-    1) «❌ Ошибся…»  – отказаться от промокода
-    2) «🔄 Попробовать другой промокод»
-    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Ошибся, промокода нет",
-                    callback_data="no_referral_from_has",
+                    text="🔁 Попробовать другой код",
+                    callback_data="has_referral",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔄 Попробовать другой промокод",
-                    callback_data="has_referral",
+                    text="➡️ Продолжить без промокода",
+                    callback_data="no_referral",
                 )
             ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]
     )

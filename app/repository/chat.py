@@ -1,4 +1,6 @@
-from sqlalchemy import update, select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from app.models.chat import Chat
 from app.core.db import get_session
 
@@ -6,7 +8,9 @@ from app.core.db import get_session
 class CRUDChat:
     async def get_chat_by_chat_id(self, chat_id: str) -> Chat | None:
         async with get_session() as session:
-            result = await session.execute(select(Chat).where(Chat.chat_id == chat_id))
+            result = await session.execute(
+                select(Chat).where(Chat.chat_id == chat_id).order_by(Chat.id.desc()).limit(1)
+            )
             return result.scalar_one_or_none()
 
     async def ensure_chat_exists(self, chat_id: str, user_id: str) -> None:
@@ -14,20 +18,17 @@ class CRUDChat:
         Если строки в chats нет — создаём со status=True.
         """
         async with get_session() as session:
-            result = await session.execute(
-                select(Chat).where(
-                    Chat.chat_id == chat_id,
-                    Chat.user_id == user_id,
-                )
-            )
-            if not result.scalar_one_or_none():
-                new_chat = Chat(
+            stmt = (
+                sqlite_insert(Chat)
+                .values(
                     chat_id=chat_id,
                     user_id=user_id,
                     status=True,
                 )
-                session.add(new_chat)
-                await session.commit()
+                .on_conflict_do_nothing(index_elements=["chat_id", "user_id"])
+            )
+            await session.execute(stmt)
+            await session.commit()
 
     async def activate_all_by_user_id(self, user_id: str) -> None:
         """

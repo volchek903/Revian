@@ -1,7 +1,8 @@
 # app/repository/message.py
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.db import get_session
 from app.models.message import Message
@@ -17,12 +18,18 @@ class CRUDMessage:
         m_type: str = "text",
     ):
         async with get_session() as session:
-            stmt = insert(Message).values(
-                msg_id=str(msg_id),
-                from_user=from_user,
-                to_user=to_user,
-                content=content,
-                type=m_type,
+            stmt = (
+                sqlite_insert(Message)
+                .values(
+                    msg_id=str(msg_id),
+                    from_user=from_user,
+                    to_user=to_user,
+                    content=content,
+                    type=m_type,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["msg_id", "from_user", "to_user"]
+                )
             )
             await session.execute(stmt)
             await session.commit()
@@ -36,9 +43,25 @@ class CRUDMessage:
                     Message.msg_id == msg_id,
                     Message.from_user == from_user,
                     Message.to_user == to_user,
-                )
+                ).limit(1)
             )
             return result.scalar_one_or_none()
+
+    async def get_messages_by_ids(
+        self, msg_ids: list[str], from_user: str, to_user: str
+    ) -> dict[str, Message]:
+        if not msg_ids:
+            return {}
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(Message).where(
+                    Message.msg_id.in_(msg_ids),
+                    Message.from_user == from_user,
+                    Message.to_user == to_user,
+                )
+            )
+            return {str(message.msg_id): message for message in result.scalars().all()}
 
     async def update_message_content(
         self, msg_id: str, from_user: str, to_user: str, new_content: str
@@ -56,21 +79,25 @@ class CRUDMessage:
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_messages_older_than(self, days: int = 30) -> int:
+    async def update_message_content_by_msg_id(
+        self,
+        msg_id: str,
+        new_content: str,
+    ) -> None:
+        async with get_session() as session:
+            stmt = update(Message).where(Message.msg_id == msg_id).values(content=new_content)
+            await session.execute(stmt)
+            await session.commit()
+
+    async def delete_messages_older_than(self, days: int = 3) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
 
         async with get_session() as session:
-            rows = await session.execute(
-                select(Message.id).where(Message.create_at < cutoff)
+            result = await session.execute(
+                delete(Message).where(Message.create_at < cutoff)
             )
-            ids_to_delete = [row[0] for row in rows.fetchall()]
-
-            if not ids_to_delete:
-                return 0
-
-            await session.execute(delete(Message).where(Message.id.in_(ids_to_delete)))
             await session.commit()
-            return len(ids_to_delete)
+            return max(result.rowcount or 0, 0)
 
 
 crud_message = CRUDMessage()

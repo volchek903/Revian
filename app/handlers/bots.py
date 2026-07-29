@@ -1,10 +1,24 @@
-from aiogram import Router, F, types
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
-from aiogram.utils.markdown import hbold
-import asyncio
+from html import escape as html_escape
 
-from app.keyboards.bot_keyboard import *
+from aiogram import F, Router, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+from app.keyboards.bot_keyboard import (
+    about_kb,
+    faq_back_kb,
+    generate_faq_kb,
+    has_referral_kb,
+    instruction_kb,
+    main_menu_kb,
+    menu_kb,
+    next_to_menu_kb,
+    no_referral_from_has_kb,
+    profile_kb,
+    retry_kb,
+    start_continue_kb,
+    support_kb,
+)
 from app.repository.user import crud_user
 from app.utils.faq_data import faq_items
 
@@ -17,21 +31,94 @@ class ReferralInput(StatesGroup):
     waiting_for_code = State()
 
 
-async def type_text(chat_id: int, text: str, bot, delay: float = 0.02):
-    sent = await bot.send_message(chat_id, ".")
-    current_text = ""
-    for char in text:
-        current_text += char
-        try:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=sent.message_id,
-                text=current_text,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-        await asyncio.sleep(delay)
+def _display_name(user: types.User) -> str:
+    return html_escape(user.full_name or user.first_name or "друг")
+
+
+def _display_username(user: types.User) -> str:
+    return f"@{html_escape(user.username)}" if user.username else "не указан"
+
+
+def _connection_status(user) -> str:
+    return "🟢 Подключён" if getattr(user, "connection_id", None) else "🟡 Не подключён"
+
+
+def _referral_status(user) -> str:
+    return "активирован" if getattr(user, "referral_id", None) else "не использован"
+
+
+def _start_text() -> str:
+    return (
+        "<b>Revian</b>\n\n"
+        "Приватный помощник для бизнес-переписки в Telegram.\n\n"
+        "<b>Что умею:</b>\n"
+        "• фиксирую удалённые сообщения\n"
+        "• показываю, что изменили после редактирования\n"
+        "• помогаю не потерять исчезающие фото и видео\n"
+        "• работаю тихо в фоне после подключения\n\n"
+        "<b>Приватность:</b>\n"
+        "• данные шифруются\n"
+        "• доступ к содержимому есть только у тебя\n\n"
+        "Нажми кнопку ниже, и я покажу, как подключить меня за минуту."
+    )
+
+
+def _returning_user_text(user: types.User, stored_user) -> str:
+    return (
+        f"<b>С возвращением, {_display_name(user)}</b>\n\n"
+        f"<b>Статус подключения:</b> {_connection_status(stored_user)}\n"
+        f"<b>Твой промокод:</b> <code>{html_escape(stored_user.ref_code)}</code>\n\n"
+        "Нужный раздел уже в меню ниже."
+    )
+
+
+def _instruction_text() -> str:
+    return (
+        "<b>Как подключить Revian</b>\n\n"
+        "1. Открой настройки Telegram.\n"
+        "2. Перейди в раздел <code>Chat Automation</code>.\n"
+        "3. Нажми <b>«Добавить бота»</b> и выбери <code>@RevianBot</code>.\n"
+        "4. Разреши доступ к сообщениям и сохрани настройки.\n\n"
+        "<b>После подключения Revian сможет:</b>\n"
+        "• сообщать об удалении сообщений\n"
+        "• сохранять исходный текст после правок\n"
+        "• перехватывать важные исчезающие медиа\n\n"
+        "<i>В старых клиентах Telegram этот раздел может называться иначе, "
+        "но логика та же: подключение бота для автоматизации чатов.</i>"
+    )
+
+
+def _main_menu_text() -> str:
+    return (
+        "<b>Главное меню Revian</b>\n\n"
+        "Здесь можно проверить статус подключения, открыть инструкцию, "
+        "активировать промокод или быстро перейти в FAQ и поддержку."
+    )
+
+
+def _support_text() -> str:
+    return (
+        "<b>Поддержка</b>\n\n"
+        "Если что-то работает не так или нужен ответ по подключению, "
+        "пиши через официальный канал проекта.\n\n"
+        "Там публикуются обновления и можно быстро связаться с командой."
+    )
+
+
+def _about_text() -> str:
+    return (
+        "<b>О проекте</b>\n\n"
+        "Revian помогает владельцу бизнес-аккаунта не терять важные изменения в переписке: "
+        "удаления, правки и исчезающие медиа.\n\n"
+        "Проект сфокусирован на двух вещах: приватности и спокойном фоновом контроле."
+    )
+
+
+def _faq_intro_text() -> str:
+    return (
+        "<b>FAQ</b>\n\n"
+        "Собрал короткие ответы на самые частые вопросы о приватности, подключении и работе бота."
+    )
 
 
 @router.message(F.text == "/userstats")
@@ -42,7 +129,7 @@ async def handle_user_stats(message: types.Message):
     stats = await crud_user.get_user_stats()
 
     await message.answer(
-        f"📊 <b>Статистика пользователей:</b>\n\n"
+        f"📊 <b>Статистика пользователей</b>\n\n"
         f"👥 Всего: <b>{stats['total']}</b>\n"
         f"📅 За месяц: <b>{stats['month']}</b>\n"
         f"🗓 За неделю: <b>{stats['week']}</b>\n"
@@ -56,34 +143,20 @@ async def handle_start_in_business(message: types.Message):
     tg_id = str(message.from_user.id)
     tg_login = message.from_user.username or message.from_user.full_name
 
-    user = await crud_user.is_user_exists(tg_id)
+    user = await crud_user.get_user_by_tg_id(tg_id)
 
     if user:
         await message.answer(
-            f"<b>👋 О, это снова ты, {hbold(tg_login)}!</b>\n\n"
-            "Я уже с тобой работаю и продолжаю следить за перепиской.\n"
-            "Ты снова в меню, хочешь что-то выбрать?",
+            _returning_user_text(message.from_user, user),
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
         return
 
-    await crud_user.add_user(tg_id, tg_login)  # ❌ Без шифрования
+    await crud_user.add_user(tg_id, tg_login)
 
     await message.answer(
-        "<b>Привет! Я Revian 👋</b>\n"
-        "Я твой личный ассистент, который не даст исчезнуть ни одному сообщению в чате!\n\n"
-        "🔍 Даже если собеседник что-то удалил — я покажу тебе это.\n"
-        "✏️ Уведомляю, если сообщение было <b>отредактировано</b>, и сохраняю его <i>оригинал</i>.\n"
-        "🧠 Я всё запоминаю и сохраняю историю переписки.\n"
-        "🛡️ Контролирую удаление сообщений и <b>уведомляю об этом мгновенно</b>.\n"
-        "📸 Сохраняю <b>сгорающие фото и видео</b>, пока они не исчезли.\n"
-        "🗂️ Храню <b>все фото, видео, голосовые и документы</b>, которые тебе отправляют.\n"
-        "🔗 Работаю автоматически и незаметно, но всегда на страже твоей переписки.\n\n"
-        "🔒 <b>Все данные надёжно зашифрованы.</b>\n"
-        "Никто — включая разработчиков — не имеет доступа к сообщениям, фото или голосовым.\n"
-        "Ты — единственный, кто может просматривать свои данные.\n\n"
-        "<b>Готов работать?</b> Просто <u>добавь меня в чат</u> — остальное я возьму на себя 💼",
+        _start_text(),
         reply_markup=start_continue_kb,
         parse_mode="HTML",
     )
@@ -91,34 +164,25 @@ async def handle_start_in_business(message: types.Message):
 
 @router.callback_query(F.data == "start_continue")
 async def handle_continue_callback(callback: types.CallbackQuery):
-    await callback.answer("✅ Продолжаем", show_alert=False)
+    await callback.answer("Открываю инструкцию")
     await callback.message.delete()
 
     await callback.bot.send_message(
         chat_id=callback.message.chat.id,
-        text=f"<b>🔧 Как подключить Revian к бизнес-аккаунту Telegram:</b>\n\n"
-        "1️⃣ Перейди в настройки своего бизнес-аккаунта Telegram.\n"
-        "2️⃣ Нажми <b>«Инструменты» → «Боты»</b>.\n"
-        "3️⃣ Нажми <b>«Добавить бота»</b>.\n"
-        "4️⃣ Введи юзернейм бота (например: <code>@RevianBot</code>).\n"
-        "5️⃣ Подтверди добавление и <b>дай доступ к сообщениям</b>.\n\n"
-        "📥 После этого бот начнёт отслеживать переписку и выполнять свои функции:\n"
-        "— сохранять удалённые сообщения\n"
-        "— уведомлять об изменениях\n"
-        "— хранить фото, голосовые и документы\n"
-        "— работать в фоне автоматически\n\n"
-        "⚠️ <i>Бот работает только в бизнес-чатах, где он официально добавлен!</i>"
-        "\n⬇️ Продолжим?",
-        reply_markup=welcome_revian_kb,
+        text=_instruction_text(),
+        reply_markup=instruction_kb(),
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data == "welcome_revian")
 async def handle_welcome_revian(callback: types.CallbackQuery):
+    await callback.answer()
     await callback.message.delete()
     await callback.message.answer(
-        "У тебя есть пригласительный <b>промокод</b>? 🎁",
+        "<b>Промокод</b>\n\n"
+        "Если у тебя есть пригласительный код, активируй его сейчас. "
+        "Если нет, можно продолжить и без него.",
         reply_markup=has_referral_kb,
         parse_mode="HTML",
     )
@@ -128,79 +192,85 @@ async def handle_welcome_revian(callback: types.CallbackQuery):
 async def ask_referral_code(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(ReferralInput.waiting_for_code)
+    await callback.message.delete()
     await callback.message.answer(
-        "✍️ Введите ваш <b>промокод</b> ниже:",
+        "<b>Активация промокода</b>\n\n"
+        "Отправь код одним сообщением. Я сразу проверю его и открою доступ дальше.",
         reply_markup=no_referral_from_has_kb,
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data == "instruction")
-async def fallback_from_referral(callback: types.CallbackQuery, state: FSMContext):
+async def show_instruction(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     await callback.message.delete()
     await callback.message.answer(
-        "<b>🔧 Как подключить Revian к бизнес-аккаунту Telegram:</b>\n\n"
-        "1️⃣ Перейди в настройки своего бизнес-аккаунта Telegram.\n"
-        "2️⃣ Нажми <b>«Инструменты» → «Боты»</b>.\n"
-        "3️⃣ Нажми <b>«Добавить бота»</b>.\n"
-        "4️⃣ Введи юзернейм бота (например: <code>@RevianBot</code>).\n"
-        "5️⃣ Подтверди добавление и <b>дай доступ к сообщениям</b>.\n\n"
-        "📥 После этого бот начнёт отслеживать переписку и выполнять свои функции:\n"
-        "— сохранять удалённые сообщения\n"
-        "— уведомлять об изменениях\n"
-        "— хранить фото, голосовые и документы\n"
-        "— работать в фоне автоматически\n\n"
-        "⚠️ <i>Бот работает только в бизнес-чатах, где он официально добавлен!</i>",
-        reply_markup=menu_kb(),
+        _instruction_text(),
+        reply_markup=instruction_kb(),
+        parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data == "no_referral")
-async def fallback_from_referral(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer("Без промокода — не проблема 😉")
+@router.callback_query(F.data.in_({"no_referral", "no_referral_from_has"}))
+async def continue_without_referral(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    await callback.answer("Продолжаем без промокода")
     await state.clear()
     await callback.message.delete()
     await callback.message.answer(
-        "Ты можешь продолжить пользоваться ботом без промокода.\n\n"
-        "🔓 Открываю доступ к возможностям Revian!",
+        "<b>Готово</b>\n\n"
+        "Промокод можно ввести позже. Сейчас открою главное меню.",
         reply_markup=main_menu_kb(),
+        parse_mode="HTML",
     )
 
 
 @router.message(ReferralInput.waiting_for_code)
 async def handle_referral_code_input(message: types.Message, state: FSMContext):
-    code = message.text.strip()
+    code = (message.text or "").strip()
     tg_id = str(message.from_user.id)
 
-    result = await crud_user.update_referral_user(
-        tg_id=tg_id, ref_code=code  # ❌ Без шифрования
-    )
+    if not code:
+        await message.answer(
+            "Нужен непустой промокод. Отправь его ещё раз одним сообщением.",
+            reply_markup=retry_kb(),
+            parse_mode="HTML",
+        )
+        await state.clear()
+        return
+
+    result = await crud_user.update_referral_user(tg_id=tg_id, ref_code=code)
 
     if result == 1:
         await message.answer(
-            f"✅ Промокод <b>{code}</b> принят!\n"
-            f"Вы успешно присоединились по приглашению 🌟",
+            f"<b>Промокод принят</b>\n\n"
+            f"Код <code>{html_escape(code)}</code> успешно активирован.",
             reply_markup=next_to_menu_kb,
             parse_mode="HTML",
         )
     elif result == -1:
         await message.answer(
-            "⚠️ Вы не можете ввести собственный промокод.\n"
-            "Поделитесь им с друзьями, чтобы получать бонусы!",
+            "<b>Промокод не подходит</b>\n\n"
+            "Нельзя активировать собственный код. Поделись им с друзьями, "
+            "а для себя используй только приглашение от другого пользователя.",
             reply_markup=retry_kb(),
             parse_mode="HTML",
         )
     elif result == -2:
         await message.answer(
-            "🛑 Вы уже использовали промокод или были приглашены ранее.",
+            "<b>Промокод уже использован</b>\n\n"
+            "Для этого аккаунта приглашение уже было активировано раньше.",
             reply_markup=menu_kb(),
             parse_mode="HTML",
         )
     else:
         await message.answer(
-            f"❌ Промокод <b>{code}</b> не найден.\n"
-            "Проверьте правильность и попробуйте ещё раз.",
+            f"<b>Код не найден</b>\n\n"
+            f"Промокод <code>{html_escape(code)}</code> не распознан. "
+            "Проверь написание и попробуй ещё раз.",
             reply_markup=retry_kb(),
             parse_mode="HTML",
         )
@@ -214,14 +284,10 @@ async def show_support(callback: types.CallbackQuery):
     await callback.message.delete()
 
     await callback.message.answer(
-        "🛟 <b>Поддержка</b>\n\n"
-        "Если у вас возникли вопросы или проблемы с работой бота — мы всегда на связи!\n\n"
-        "📨 Вы можете обратиться в наш официальный Telegram-канал:\n"
-        "<a href='https://t.me/RevianNews'>@RevianNews</a>\n\n"
-        "Мы постараемся помочь как можно быстрее 💬",
+        _support_text(),
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=main_menu_kb(),
+        reply_markup=support_kb(),
     )
 
 
@@ -231,17 +297,10 @@ async def show_about(callback: types.CallbackQuery):
     await callback.message.delete()
 
     await callback.message.answer(
-        "ℹ️ <b>О нас</b>\n\n"
-        "Revian — это интеллектуальный Telegram-бот, разработанный для защиты, сохранения и анализа вашей переписки.\n\n"
-        "🆕 Подписывайтесь на наш официальный канал, чтобы не пропустить:\n"
-        "— обновления функционала\n"
-        "— новости проекта\n"
-        "— важные уведомления\n\n"
-        "📢 Канал: <a href='https://t.me/RevianNews'>@RevianNews</a>\n"
-        "👨‍💻 Разработано: <a href='https://t.me/TeamATechs'>@TeamATech</a>",
+        _about_text(),
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=main_menu_kb(),
+        reply_markup=about_kb(),
     )
 
 
@@ -250,7 +309,7 @@ async def show_faq_menu(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.delete()
     await callback.message.answer(
-        "ℹ️ <b>Часто задаваемые вопросы</b>\n\nВыберите интересующий вас вопрос:",
+        _faq_intro_text(),
         reply_markup=generate_faq_kb(faq_items),
         parse_mode="HTML",
     )
@@ -265,11 +324,15 @@ async def handle_faq_answer(callback: types.CallbackQuery):
 
     answer = next((item for item in faq_items if item["id"] == question_id), None)
     if not answer:
-        await callback.message.answer("❗ Вопрос не найден.", reply_markup=faq_back_kb)
+        await callback.message.answer(
+            "Не удалось найти этот вопрос. Вернись в список и выбери другой.",
+            reply_markup=faq_back_kb,
+            parse_mode="HTML",
+        )
         return
 
     await callback.message.answer(
-        f"<b>{answer['question']}</b>\n\n{answer['answer']}",
+        f"<b>{html_escape(answer['question'])}</b>\n\n{answer['answer']}",
         parse_mode="HTML",
         reply_markup=faq_back_kb,
         disable_web_page_preview=answer.get("disable_preview", False),
@@ -281,7 +344,7 @@ async def show_main_menu(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.delete()
     await callback.message.answer(
-        "🏠 <b>Ты в главном меню.</b>",
+        _main_menu_text(),
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )
@@ -290,9 +353,27 @@ async def show_main_menu(callback: types.CallbackQuery):
 @router.callback_query(F.data == "profile")
 async def show_profile(callback: types.CallbackQuery):
     await callback.answer()
+    await callback.message.delete()
+
+    user = await crud_user.get_user_by_tg_id(str(callback.from_user.id))
+
+    if not user:
+        await callback.message.answer(
+            "<b>Профиль пока не найден</b>\n\n"
+            "Нажми /start, чтобы заново инициализировать аккаунт.",
+            reply_markup=menu_kb(),
+            parse_mode="HTML",
+        )
+        return
+
     await callback.message.answer(
-        f"👤 <b>Твой профиль</b>\n\n"
-        f"• Имя: {callback.from_user.full_name}\n"
-        f"• ID: <code>{callback.from_user.id}</code>",
+        f"<b>Твой профиль</b>\n\n"
+        f"<b>Имя:</b> {_display_name(callback.from_user)}\n"
+        f"<b>Username:</b> {_display_username(callback.from_user)}\n"
+        f"<b>ID:</b> <code>{callback.from_user.id}</code>\n"
+        f"<b>Статус подключения:</b> {_connection_status(user)}\n"
+        f"<b>Твой промокод:</b> <code>{html_escape(user.ref_code)}</code>\n"
+        f"<b>Входной промокод:</b> {_referral_status(user)}",
         parse_mode="HTML",
+        reply_markup=profile_kb(),
     )

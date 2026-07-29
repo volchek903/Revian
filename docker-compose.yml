@@ -12,9 +12,16 @@ services:
       APP_TZ: Europe/Moscow
       SQLITE_DB_NAME: storage/revian.sqlite3
       LOG_FILE: logs/bot_logs.log
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      MESSAGE_RETENTION_DAYS: 3
       CLEANUP_HOUR: 19
       CLEANUP_MINUTE: 24
-      RUN_CLEANUP_ON_START: "false"
+      RUN_CLEANUP_ON_START: "true"
       POLLING_TASKS_LIMIT: 8
       MEDIA_DOWNLOAD_CONCURRENCY: 2
       MAX_MEDIA_SIZE_MB: 20
