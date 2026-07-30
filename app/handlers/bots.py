@@ -80,6 +80,8 @@ def _format_remaining(remaining) -> str:
 
 def _trial_status_label(stored_user) -> str:
     trial_state = build_trial_state(stored_user)
+    if trial_state.is_lifetime:
+        return "♾ Без ограничений"
     if trial_state.is_active:
         return (
             f"🟢 Активен до {_format_dt(trial_state.trial_ends_at)} "
@@ -290,6 +292,33 @@ async def handle_referral_code_input(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
+    if settings.LIFETIME_PROMO_CODE and code == settings.LIFETIME_PROMO_CODE.upper():
+        result = await crud_user.activate_lifetime_access(tg_id=tg_id)
+
+        if result == 1:
+            await message.answer(
+                "<b>Промокод принят</b>\n\n"
+                "Для этого аккаунта активирован бессрочный доступ без ограничений.",
+                reply_markup=next_to_menu_kb,
+                parse_mode="HTML",
+            )
+        elif result == -1:
+            await message.answer(
+                "<b>Доступ уже активирован</b>\n\n"
+                "Для этого аккаунта уже включён бессрочный режим.",
+                reply_markup=menu_kb(),
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                "<b>Профиль не найден</b>\n\n"
+                "Нажми /start и попробуй активировать промокод снова.",
+                reply_markup=menu_kb(),
+                parse_mode="HTML",
+            )
+        await state.clear()
+        return
+
     result = await crud_user.update_referral_user(tg_id=tg_id, ref_code=code)
 
     if result == 1:
@@ -423,13 +452,14 @@ async def show_profile(callback: types.CallbackQuery):
         f"<b>Имя:</b> {_display_name(callback.from_user)}\n"
         f"<b>Username:</b> {_display_username(callback.from_user)}\n"
         f"<b>ID:</b> <code>{callback.from_user.id}</code>\n"
-        f"<b>Доступ:</b> {'🟢 Активен' if trial_state.is_active else '🔴 Истёк'}\n"
-        f"<b>Доступ до:</b> {_format_dt(trial_state.trial_ends_at)}\n"
-        f"<b>Осталось:</b> {_format_remaining(trial_state.remaining)}\n"
+        f"<b>Доступ:</b> {'♾ Бессрочный' if trial_state.is_lifetime else ('🟢 Активен' if trial_state.is_active else '🔴 Истёк')}\n"
+        f"<b>Доступ до:</b> {'без ограничений' if trial_state.is_lifetime else _format_dt(trial_state.trial_ends_at)}\n"
+        f"<b>Осталось:</b> {'без ограничений' if trial_state.is_lifetime else _format_remaining(trial_state.remaining)}\n"
         f"<b>Статус подключения:</b> {_connection_status(user)}\n"
         f"<b>Твой промокод:</b> <code>{html_escape(user.ref_code)}</code>\n"
         f"<b>Входной промокод:</b> {_referral_status(user)}\n"
         f"<b>Приглашён:</b> {_format_dt(getattr(user, 'referred_at', None))}\n"
+        f"<b>Бессрочный доступ активирован:</b> {_format_dt(getattr(user, 'lifetime_activated_at', None))}\n"
         f"<b>Активных приглашений:</b> {referral_summary.active_count}\n"
         f"<b>Последний приглашён:</b> {_format_dt(referral_summary.latest_referred_at)}",
         parse_mode="HTML",

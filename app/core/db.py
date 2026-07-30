@@ -78,6 +78,10 @@ async def _upgrade_sqlite_users_schema(conn) -> None:
         alter_statements.append("ALTER TABLE users ADD COLUMN referral_status VARCHAR")
     if "referred_at" not in columns:
         alter_statements.append("ALTER TABLE users ADD COLUMN referred_at DATETIME")
+    if "lifetime_access" not in columns:
+        alter_statements.append("ALTER TABLE users ADD COLUMN lifetime_access BOOLEAN DEFAULT 0")
+    if "lifetime_activated_at" not in columns:
+        alter_statements.append("ALTER TABLE users ADD COLUMN lifetime_activated_at DATETIME")
     if "trial_ends_at" not in columns:
         alter_statements.append("ALTER TABLE users ADD COLUMN trial_ends_at DATETIME")
 
@@ -93,6 +97,10 @@ async def _upgrade_sqlite_users_schema(conn) -> None:
         "UPDATE users "
         "SET referred_at = COALESCE(referred_at, create_at) "
         "WHERE referral_id IS NOT NULL AND referred_at IS NULL"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE users "
+        "SET lifetime_access = COALESCE(lifetime_access, 0)"
     )
     await conn.exec_driver_sql(
         "UPDATE users "

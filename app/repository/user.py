@@ -140,6 +140,21 @@ class CRUDUser:
             await session.commit()
             return 1
 
+    async def activate_lifetime_access(self, tg_id: str) -> int:
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.tgID == tg_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                return 0
+
+            if bool(getattr(user, "lifetime_access", False)):
+                return -1
+
+            user.lifetime_access = True
+            user.lifetime_activated_at = now_in_app_tz()
+            await session.commit()
+            return 1
+
     async def get_referral_summary(self, tg_id: str):
         async with get_session() as session:
             result = await session.execute(

@@ -35,11 +35,20 @@ def extend_trial(current_end: datetime | None, *, from_time: datetime | None = N
 @dataclass(frozen=True)
 class TrialState:
     is_active: bool
-    trial_ends_at: datetime
+    is_lifetime: bool
+    trial_ends_at: datetime | None
     remaining: timedelta
 
 
 def build_trial_state(user) -> TrialState:
+    if bool(getattr(user, "lifetime_access", False)):
+        return TrialState(
+            is_active=True,
+            is_lifetime=True,
+            trial_ends_at=None,
+            remaining=timedelta.max,
+        )
+
     now = now_in_app_tz()
     trial_ends_at = normalize_dt(getattr(user, "trial_ends_at", None))
     if trial_ends_at is None:
@@ -48,6 +57,7 @@ def build_trial_state(user) -> TrialState:
     remaining = trial_ends_at - now
     return TrialState(
         is_active=remaining.total_seconds() > 0,
+        is_lifetime=False,
         trial_ends_at=trial_ends_at,
         remaining=remaining,
     )

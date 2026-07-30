@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     REFERRAL_BONUS_HOURS: int = Field(default=48, ge=1)
     TRIAL_NOTICE_COOLDOWN_MINUTES: int = Field(default=60, ge=1)
     TRIAL_SUPPORT_HANDLE: str = "@volchek903"
+    LIFETIME_PROMO_CODE: str | None = None
     TELEGRAM_STARTUP_TIMEOUT_SEC: int = Field(default=30, ge=1)
     TELEGRAM_STARTUP_RETRY_DELAY_SEC: int = Field(default=5, ge=1)
     TELEGRAM_STARTUP_RETRY_MAX_DELAY_SEC: int = Field(default=60, ge=1)
