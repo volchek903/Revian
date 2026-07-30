@@ -1,9 +1,11 @@
 from html import escape as html_escape
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from app.core.config import settings
 from app.keyboards.bot_keyboard import (
     about_kb,
     faq_back_kb,
@@ -21,10 +23,12 @@ from app.keyboards.bot_keyboard import (
 )
 from app.repository.user import crud_user
 from app.utils.faq_data import faq_items
+from app.utils.trial import REFERRAL_STATUS_ACTIVE, build_trial_state, normalize_dt
 
 router = Router()
 
 Admin = "830091750"
+APP_TZ = ZoneInfo(settings.APP_TZ)
 
 
 class ReferralInput(StatesGroup):
@@ -44,13 +48,52 @@ def _connection_status(user) -> str:
 
 
 def _referral_status(user) -> str:
-    return "активирован" if getattr(user, "referral_id", None) else "не использован"
+    if getattr(user, "referral_status", None) == REFERRAL_STATUS_ACTIVE:
+        return "активный"
+    return "не использован"
+
+
+def _format_dt(value) -> str:
+    dt = normalize_dt(value)
+    if dt is None:
+        return "—"
+    return dt.astimezone(APP_TZ).strftime("%d.%m.%Y %H:%M")
+
+
+def _format_remaining(remaining) -> str:
+    total_seconds = int(max(remaining.total_seconds(), 0))
+    if total_seconds <= 0:
+        return "0 ч"
+
+    hours_total, minutes = divmod(total_seconds // 60, 60)
+    days, hours = divmod(hours_total, 24)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days} д")
+    if hours:
+        parts.append(f"{hours} ч")
+    if minutes and not days:
+        parts.append(f"{minutes} мин")
+    return " ".join(parts) or "0 ч"
+
+
+def _trial_status_label(stored_user) -> str:
+    trial_state = build_trial_state(stored_user)
+    if trial_state.is_active:
+        return (
+            f"🟢 Активен до {_format_dt(trial_state.trial_ends_at)} "
+            f"({_format_remaining(trial_state.remaining)})"
+        )
+    return f"🔴 Истёк {_format_dt(trial_state.trial_ends_at)}"
 
 
 def _start_text() -> str:
     return (
         "<b>Revian</b>\n\n"
         "Приватный помощник для бизнес-переписки в Telegram.\n\n"
+        f"<b>Доступ:</b> полный функционал на {settings.TRIAL_PERIOD_HOURS} часов.\n"
+        f"После этого можно пригласить друга и получить ещё {settings.REFERRAL_BONUS_HOURS} часов бесплатно.\n\n"
         "<b>Что умею:</b>\n"
         "• фиксирую удалённые сообщения\n"
         "• показываю, что изменили после редактирования\n"
@@ -66,6 +109,7 @@ def _start_text() -> str:
 def _returning_user_text(user: types.User, stored_user) -> str:
     return (
         f"<b>С возвращением, {_display_name(user)}</b>\n\n"
+        f"<b>Доступ:</b> {_trial_status_label(stored_user)}\n"
         f"<b>Статус подключения:</b> {_connection_status(stored_user)}\n"
         f"<b>Твой промокод:</b> <code>{html_escape(stored_user.ref_code)}</code>\n\n"
         "Нужный раздел уже в меню ниже."
@@ -230,7 +274,7 @@ async def continue_without_referral(
 
 @router.message(ReferralInput.waiting_for_code)
 async def handle_referral_code_input(message: types.Message, state: FSMContext):
-    code = (message.text or "").strip()
+    code = (message.text or "").strip().upper()
     tg_id = str(message.from_user.id)
 
     if not code:
@@ -247,7 +291,8 @@ async def handle_referral_code_input(message: types.Message, state: FSMContext):
     if result == 1:
         await message.answer(
             f"<b>Промокод принят</b>\n\n"
-            f"Код <code>{html_escape(code)}</code> успешно активирован.",
+            f"Код <code>{html_escape(code)}</code> успешно активирован.\n"
+            f"Пользователь, который тебя пригласил, получил ещё {settings.REFERRAL_BONUS_HOURS} часов доступа.",
             reply_markup=next_to_menu_kb,
             parse_mode="HTML",
         )
@@ -366,14 +411,23 @@ async def show_profile(callback: types.CallbackQuery):
         )
         return
 
+    referral_summary = await crud_user.get_referral_summary(str(callback.from_user.id))
+    trial_state = build_trial_state(user)
+
     await callback.message.answer(
         f"<b>Твой профиль</b>\n\n"
         f"<b>Имя:</b> {_display_name(callback.from_user)}\n"
         f"<b>Username:</b> {_display_username(callback.from_user)}\n"
         f"<b>ID:</b> <code>{callback.from_user.id}</code>\n"
+        f"<b>Доступ:</b> {'🟢 Активен' if trial_state.is_active else '🔴 Истёк'}\n"
+        f"<b>Доступ до:</b> {_format_dt(trial_state.trial_ends_at)}\n"
+        f"<b>Осталось:</b> {_format_remaining(trial_state.remaining)}\n"
         f"<b>Статус подключения:</b> {_connection_status(user)}\n"
         f"<b>Твой промокод:</b> <code>{html_escape(user.ref_code)}</code>\n"
-        f"<b>Входной промокод:</b> {_referral_status(user)}",
+        f"<b>Входной промокод:</b> {_referral_status(user)}\n"
+        f"<b>Приглашён:</b> {_format_dt(getattr(user, 'referred_at', None))}\n"
+        f"<b>Активных приглашений:</b> {referral_summary.active_count}\n"
+        f"<b>Последний приглашён:</b> {_format_dt(referral_summary.latest_referred_at)}",
         parse_mode="HTML",
         reply_markup=profile_kb(),
     )

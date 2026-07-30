@@ -1,16 +1,30 @@
-from app.core.db import get_session
-from sqlalchemy import select, update
-from app.models.user import User
 import hashlib
-from datetime import datetime
-import pytz
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+
 from sqlalchemy import func
+from sqlalchemy import select, update
+
+from app.core.db import get_session
+from app.models.user import User
+from app.utils.trial import (
+    REFERRAL_STATUS_ACTIVE,
+    extend_trial,
+    initial_trial_end,
+    normalize_dt,
+    now_in_app_tz,
+)
 
 
 def generate_referral_from_user_id(user_id: int | str, length: int = 6) -> str:
     hash_digest = hashlib.sha256(str(user_id).encode()).hexdigest().upper()
     return hash_digest[:length]
+
+
+@dataclass(frozen=True)
+class ReferralSummary:
+    active_count: int
+    latest_referred_at: datetime | None
 
 
 class CRUDUser:
@@ -39,7 +53,7 @@ class CRUDUser:
 
     async def get_user_stats(self):
         async with get_session() as session:
-            now = datetime.now(pytz.timezone("Europe/Moscow"))
+            now = now_in_app_tz()
 
             time_24h = now - timedelta(days=1)
             time_7d = now - timedelta(days=7)
@@ -70,8 +84,7 @@ class CRUDUser:
             existing_user = result.scalar_one_or_none()
             if existing_user:
                 return
-            moscow_tz = pytz.timezone("Europe/Moscow")
-            now_msk = datetime.now(moscow_tz)
+            now = now_in_app_tz()
             max_attempts = 10
             for _ in range(max_attempts):
                 new_code = generate_referral_from_user_id(str(tg_id))
@@ -90,7 +103,8 @@ class CRUDUser:
                 tgID=tg_id,
                 tgLog=tg_login,
                 ref_code=new_code,
-                create_at=now_msk,
+                create_at=now,
+                trial_ends_at=initial_trial_end(now),
             )
             session.add(user)
             await session.commit()
@@ -98,35 +112,50 @@ class CRUDUser:
 
     async def update_referral_user(self, tg_id: str, ref_code: str) -> int:
         async with get_session() as session:
-            # Проверка: существует ли пользователь с таким реф. кодом
             result = await session.execute(
                 select(User).where(User.ref_code == ref_code)
             )
             referrer = result.scalar_one_or_none()
 
             if not referrer:
-                # Реферальный код не существует
                 return 0
 
             if referrer.tgID == tg_id:
-                # Нельзя ввести свой собственный код
                 return -1
 
-            # Проверка: текущий пользователь уже привязан?
             result = await session.execute(select(User).where(User.tgID == tg_id))
             user = result.scalar_one_or_none()
 
             if not user or user.referral_id:
-                # Либо пользователь не найден, либо уже привязан
                 return -2
 
-            # Обновляем поле referral_id
-            stmt = (
-                update(User).where(User.tgID == tg_id).values(referral_id=referrer.tgID)
+            now = now_in_app_tz()
+            user.referral_id = referrer.tgID
+            user.referral_status = REFERRAL_STATUS_ACTIVE
+            user.referred_at = now
+            referrer.trial_ends_at = extend_trial(
+                getattr(referrer, "trial_ends_at", None),
+                from_time=now,
             )
-            await session.execute(stmt)
             await session.commit()
-            return 1  # Успешно
+            return 1
+
+    async def get_referral_summary(self, tg_id: str):
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    func.count(),
+                    func.max(User.referred_at),
+                ).select_from(User).where(
+                    User.referral_id == tg_id,
+                    User.referral_status == REFERRAL_STATUS_ACTIVE,
+                )
+            )
+            active_count, latest_referred_at = result.one()
+            return ReferralSummary(
+                active_count=int(active_count or 0),
+                latest_referred_at=normalize_dt(latest_referred_at),
+            )
 
     async def is_user_exists(self, tg_id: str) -> bool:
         async with get_session() as session:

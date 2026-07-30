@@ -15,6 +15,7 @@ from app.repository.chat import crud_chat
 from app.repository.message import crud_message
 from app.repository.user import crud_user
 from app.utils.encription import encrypt, decrypt
+from app.utils.trial import build_trial_state
 
 router = Router()
 MEDIA_DOWNLOAD_SEMAPHORE = asyncio.Semaphore(settings.MEDIA_DOWNLOAD_CONCURRENCY)
@@ -22,6 +23,7 @@ MAX_MEDIA_SIZE_BYTES = settings.MAX_MEDIA_SIZE_MB * 1024 * 1024
 OWNER_CACHE_TTL_SEC = 300.0
 KNOWN_CHAT_CACHE_TTL_SEC = 3600.0
 CLIENT_CHAT_CACHE_TTL_SEC = 600.0
+TRIAL_NOTICE_COOLDOWN_SEC = settings.TRIAL_NOTICE_COOLDOWN_MINUTES * 60.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,6 +37,7 @@ _owner_cache_by_chat: dict[str, tuple[float, OwnerRef]] = {}
 _owner_cache_by_sender: dict[str, tuple[float, OwnerRef]] = {}
 _known_chat_cache: dict[tuple[str, str], float] = {}
 _client_chat_cache: dict[str, tuple[float, tuple[str, str]]] = {}
+_trial_notice_cache: dict[str, float] = {}
 
 
 async def set_message(message: types.Message) -> None:
@@ -42,6 +45,51 @@ async def set_message(message: types.Message) -> None:
         logger.info(f"Сообщение сохранено: {message.chat.id}:{message.message_id}")
     except Exception as e:
         logger.error(f"Ошибка при сохранении сообщения: {e}")
+
+
+def _build_trial_expired_text(user) -> str:
+    return (
+        "⛔ <b>Испытательный срок закончился</b>\n\n"
+        "Новые сообщения больше не записываются, а уведомления по этому чату остановлены.\n\n"
+        f"Чтобы получить ещё {settings.REFERRAL_BONUS_HOURS} часов бесплатно, "
+        "пригласи друга по своему коду:\n"
+        f"<code>{html_escape(user.ref_code)}</code>\n\n"
+        f"Или обратись к владельцу {html_escape(settings.TRIAL_SUPPORT_HANDLE)}."
+    )
+
+
+async def _ensure_trial_access(bot: Bot, owner_id: str, *, force_notice: bool = False) -> bool:
+    user = await crud_user.get_user_by_tg_id(owner_id)
+    if not user:
+        return False
+
+    trial_state = build_trial_state(user)
+    if trial_state.is_active:
+        _trial_notice_cache.pop(owner_id, None)
+        return True
+
+    now = monotonic()
+    send_notice = force_notice
+    expires_at = _trial_notice_cache.get(owner_id)
+    if expires_at is None or expires_at <= now:
+        send_notice = True
+        _trial_notice_cache[owner_id] = now + TRIAL_NOTICE_COOLDOWN_SEC
+
+    if not send_notice:
+        return False
+
+    try:
+        await bot.send_message(
+            chat_id=owner_id,
+            text=_build_trial_expired_text(user),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning(
+            f"trial: не удалось отправить уведомление об окончании доступа user_id={owner_id}: {e}"
+        )
+
+    return False
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -462,7 +510,9 @@ async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
             sender_id=user_id,
         )
 
-        # Приветственное сообщение
+        if not await _ensure_trial_access(bot, user_id, force_notice=True):
+            return
+
         welcome_text = (
             "✅ <b>Revian подключён</b>\n\n"
             "Теперь я отслеживаю выбранные чаты и сразу сообщу, если собеседник:\n"
@@ -638,6 +688,8 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
         logger.error(f"business: не найден пользователь с connection_id={connection_id}")
         return
     owner_id: str = owner.tg_id
+    if not await _ensure_trial_access(bot, owner_id):
+        return
 
     # Если пишет клиент — обрабатываем медиа-ответы и выходим
     if chat_id != from_id:
@@ -677,6 +729,8 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
         )
         return
     owner_id: str = owner.tg_id
+    if not await _ensure_trial_access(bot, owner_id):
+        return
 
     new_content_raw: str = message.text or message.caption or ""
 
@@ -756,6 +810,8 @@ async def deleted_business_message(
         )
         return
     owner_id: str = owner.tg_id
+    if not await _ensure_trial_access(bot, owner_id):
+        return
     client_name, client_username = await _resolve_client_identity(bot, chat_id)
     stored_messages = await crud_message.get_messages_by_ids(
         msg_ids=msg_ids,
