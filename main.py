@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit
 
 from aiogram import Dispatcher, Bot
 from aiogram.client.default import DefaultBotProperties
@@ -13,6 +14,7 @@ from aiogram.exceptions import TelegramConflictError, TelegramNetworkError
 
 from app.core.config import settings
 from app.core.db import init_db
+from app.core.telegram_session import HttpProxyAiohttpSession
 from app.handlers.chats import router as router_chats
 from app.handlers.bots import router as router_bots
 from app.repository.message import crud_message
@@ -39,8 +41,38 @@ def _disable_proxy_env() -> None:
 
 _disable_proxy_env()
 
+
+def _mask_proxy_url(proxy_url: str) -> str:
+    parsed = urlsplit(proxy_url)
+    if not parsed.hostname:
+        return "invalid-proxy"
+
+    auth_prefix = ""
+    if parsed.username:
+        auth_prefix = f"{parsed.username}:***@"
+
+    port_suffix = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{auth_prefix}{parsed.hostname}{port_suffix}"
+
+
+def _build_bot() -> Bot:
+    session = None
+
+    if settings.TELEGRAM_PROXY_URL:
+        session = HttpProxyAiohttpSession(proxy_url=settings.TELEGRAM_PROXY_URL)
+        logger.info(
+            f"🌐 Telegram proxy enabled: {_mask_proxy_url(settings.TELEGRAM_PROXY_URL)}"
+        )
+
+    return Bot(
+        token=settings.BOT_TOKEN,
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+
 # --- Bot / Dispatcher ---
-bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = _build_bot()
 dp = Dispatcher()
 dp.include_router(router_bots)
 dp.include_router(router_chats)
@@ -78,19 +110,32 @@ async def _run_cleanup():
 
 async def _call_telegram_api_with_retry(action_name: str, func, **kwargs):
     delay = TELEGRAM_STARTUP_RETRY_DELAY_SEC
+    attempt = 1
+    started_at = asyncio.get_running_loop().time()
 
     while True:
         try:
-            return await func(
+            result = await func(
                 request_timeout=TELEGRAM_STARTUP_TIMEOUT_SEC,
                 **kwargs,
             )
-        except TelegramNetworkError as e:
+            if attempt > 1:
+                elapsed = int(asyncio.get_running_loop().time() - started_at)
+                logger.info(
+                    "🌐 Telegram API recovered during "
+                    f"{action_name}: attempt={attempt}, elapsed={elapsed}s"
+                )
+            return result
+        except (TelegramNetworkError, asyncio.TimeoutError) as e:
+            elapsed = int(asyncio.get_running_loop().time() - started_at)
             logger.warning(
-                f"🌐 Telegram API timeout during {action_name}: {e}. "
-                f"Retry in {delay}s"
+                "🌐 Telegram API unavailable during "
+                f"{action_name}: attempt={attempt}, elapsed={elapsed}s, "
+                f"timeout={TELEGRAM_STARTUP_TIMEOUT_SEC}s, retry_in={delay}s, "
+                f"error={e}"
             )
             await asyncio.sleep(delay)
+            attempt += 1
             delay = min(delay * 2, TELEGRAM_STARTUP_RETRY_MAX_DELAY_SEC)
 
 
@@ -122,6 +167,10 @@ async def _on_startup():
     await init_db()
     if settings.RUN_CLEANUP_ON_START:
         await _run_cleanup()
+    logger.info(
+        "🌐 Checking Telegram API availability "
+        f"(timeout={TELEGRAM_STARTUP_TIMEOUT_SEC}s)"
+    )
     me = await _call_telegram_api_with_retry("get_me", bot.get_me)
     logger.info(
         f"🤖 Bot started: {me.full_name} (@{me.username}), id={me.id}"

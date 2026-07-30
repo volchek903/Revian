@@ -2,6 +2,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+from urllib.parse import quote
 
 
 class Settings(BaseSettings):
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     TELEGRAM_STARTUP_TIMEOUT_SEC: int = Field(default=30, ge=1)
     TELEGRAM_STARTUP_RETRY_DELAY_SEC: int = Field(default=5, ge=1)
     TELEGRAM_STARTUP_RETRY_MAX_DELAY_SEC: int = Field(default=60, ge=1)
+    TELEGRAM_PROXY: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -29,6 +31,30 @@ class Settings(BaseSettings):
         db_path = project_root / self.SQLITE_DB_NAME
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite+aiosqlite:///{db_path}"
+
+    @property
+    def TELEGRAM_PROXY_URL(self) -> str | None:
+        if not self.TELEGRAM_PROXY:
+            return None
+
+        raw_proxy = self.TELEGRAM_PROXY.strip()
+        if "://" in raw_proxy:
+            return raw_proxy
+
+        parts = raw_proxy.split(":")
+        if len(parts) == 2:
+            host, port = parts
+            return f"http://{host}:{port}"
+
+        if len(parts) == 4:
+            host, port, username, password = parts
+            safe_username = quote(username, safe="")
+            safe_password = quote(password, safe="")
+            return f"http://{safe_username}:{safe_password}@{host}:{port}"
+
+        raise ValueError(
+            "TELEGRAM_PROXY must be in URL format or host:port[:username:password]"
+        )
 
 
 settings = Settings()
