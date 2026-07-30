@@ -6,7 +6,7 @@ from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.methods import TelegramMethod
-from aiogram.types import TelegramType
+from aiogram.methods.base import TelegramType
 
 
 class HttpProxyAiohttpSession(AiohttpSession):
