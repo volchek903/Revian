@@ -11,6 +11,8 @@ from aiogram import Dispatcher, Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramConflictError, TelegramNetworkError
+from aiogram.filters import ExceptionTypeFilter
+from aiogram.types import ErrorEvent
 
 from app.core.config import settings
 from app.core.db import init_db
@@ -53,6 +55,12 @@ def _mask_proxy_url(proxy_url: str) -> str:
 
     port_suffix = f":{parsed.port}" if parsed.port else ""
     return f"{parsed.scheme}://{auth_prefix}{parsed.hostname}{port_suffix}"
+
+
+def _telegram_transport_label() -> str:
+    if settings.TELEGRAM_PROXY_URL:
+        return f"proxy={_mask_proxy_url(settings.TELEGRAM_PROXY_URL)}"
+    return "direct"
 
 
 def _build_bot() -> Bot:
@@ -165,6 +173,7 @@ async def _on_startup():
     global cleanup_task
 
     await init_db()
+    logger.info(f"🌐 Telegram transport: {_telegram_transport_label()}")
     if settings.RUN_CLEANUP_ON_START:
         await _run_cleanup()
     logger.info(
@@ -210,6 +219,19 @@ async def _on_shutdown():
     finally:
         cleanup_task = None
     logger.info("👋 Bot shutdown complete")
+
+
+@dp.error(ExceptionTypeFilter(TelegramNetworkError))
+async def _on_telegram_network_error(event: ErrorEvent):
+    update = event.update
+    logger.warning(
+        "🌐 Telegram API error while processing update: "
+        f"update_id={update.update_id}, "
+        f"update_type={update.event_type}, "
+        f"transport={_telegram_transport_label()}, "
+        f"error={event.exception}"
+    )
+    return True
 
 
 dp.startup.register(_on_startup)
