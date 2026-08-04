@@ -26,8 +26,6 @@ from app.utils.faq_data import faq_items
 from app.utils.trial import REFERRAL_STATUS_ACTIVE, build_trial_state, normalize_dt
 
 router = Router()
-
-Admin = "830091750"
 APP_TZ = ZoneInfo(settings.APP_TZ)
 
 
@@ -37,6 +35,10 @@ class ReferralInput(StatesGroup):
 
 def _display_name(user: types.User) -> str:
     return html_escape(user.full_name or user.first_name or "друг")
+
+
+def _is_admin_user(user_id: int | str | None) -> bool:
+    return bool(settings.ADMIN_TG_ID and str(user_id) == settings.ADMIN_TG_ID)
 
 
 def _display_username(user: types.User) -> str:
@@ -173,7 +175,7 @@ def _faq_intro_text() -> str:
 
 @router.message(F.text == "/userstats")
 async def handle_user_stats(message: types.Message):
-    if str(message.from_user.id) != Admin:
+    if not _is_admin_user(message.from_user.id):
         return
 
     stats = await crud_user.get_user_stats()

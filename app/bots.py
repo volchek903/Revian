@@ -13,7 +13,9 @@ import asyncio
 bot = Bot(token=settings.BOT_TOKEN)
 router = Router()
 
-Admin = "830091750"
+
+def _is_admin_user(user_id: int | str | None) -> bool:
+    return bool(settings.ADMIN_TG_ID and str(user_id) == settings.ADMIN_TG_ID)
 
 
 class ReferralInput(StatesGroup):
@@ -39,7 +41,7 @@ async def type_text(chat_id: int, text: str, bot, delay: float = 0.02):
 
 @router.message(F.text == "/userstats")
 async def handle_user_stats(message: types.Message):
-    if str(message.from_user.id) != Admin:
+    if not _is_admin_user(message.from_user.id):
         return
 
     stats = await crud_user.get_user_stats()

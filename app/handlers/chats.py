@@ -33,8 +33,6 @@ class OwnerRef:
 
 
 _owner_cache_by_connection: dict[str, tuple[float, OwnerRef]] = {}
-_owner_cache_by_chat: dict[str, tuple[float, OwnerRef]] = {}
-_owner_cache_by_sender: dict[str, tuple[float, OwnerRef]] = {}
 _known_chat_cache: dict[tuple[str, str], float] = {}
 _client_chat_cache: dict[str, tuple[float, tuple[str, str]]] = {}
 _trial_notice_cache: dict[str, float] = {}
@@ -128,20 +126,15 @@ def _owner_from_user(user) -> OwnerRef:
     )
 
 
+def _business_user_login(user: types.User) -> str:
+    return user.username or user.full_name or user.first_name or str(user.id)
+
+
 def _cache_owner(
     owner: OwnerRef,
     *,
     connection_id: str | None,
-    chat_id: str | None,
-    sender_id: str | None = None,
 ) -> None:
-    _set_cached_entry(_owner_cache_by_chat, chat_id, owner, OWNER_CACHE_TTL_SEC)
-    _set_cached_entry(
-        _owner_cache_by_sender,
-        sender_id,
-        owner,
-        OWNER_CACHE_TTL_SEC,
-    )
     _set_cached_entry(
         _owner_cache_by_connection,
         connection_id or owner.connection_id,
@@ -153,15 +146,9 @@ def _cache_owner(
 def _drop_owner_cache(
     *,
     connection_id: str | None,
-    chat_id: str | None,
-    sender_id: str | None = None,
 ) -> None:
     if connection_id:
         _owner_cache_by_connection.pop(connection_id, None)
-    if chat_id:
-        _owner_cache_by_chat.pop(chat_id, None)
-    if sender_id:
-        _owner_cache_by_sender.pop(sender_id, None)
 
 
 async def _ensure_chat_registered(chat_id: str, user_id: str) -> None:
@@ -399,75 +386,42 @@ async def _resolve_owner(
     chat_id: str,
     sender_id: str | None = None,
 ):
-    cached_owner = _get_cached_entry(_owner_cache_by_connection, connection_id)
-    if cached_owner:
-        return cached_owner
-
-    cached_owner = _get_cached_entry(_owner_cache_by_chat, chat_id)
-    if cached_owner:
-        return cached_owner
-
-    cached_owner = _get_cached_entry(_owner_cache_by_sender, sender_id)
-    if cached_owner:
-        return cached_owner
-
     owner = None
-
     if connection_id:
+        cached_owner = _get_cached_entry(_owner_cache_by_connection, connection_id)
+        if cached_owner:
+            return cached_owner
+
         owner = await crud_user.get_user_by_connection_id(connection_id)
         if owner:
             resolved_owner = _owner_from_user(owner)
             _cache_owner(
                 resolved_owner,
                 connection_id=connection_id,
-                chat_id=chat_id,
-                sender_id=sender_id,
             )
             return resolved_owner
-        logger.warning(
-            f"business: connection_id={connection_id} not found, trying fallback resolution for chat_id={chat_id}"
+        logger.error(
+            "business: connection_id={} not found; refusing fallback resolution for chat_id={}, sender_id={}",
+            connection_id,
+            chat_id,
+            sender_id,
         )
-
-    owner = await crud_user.get_user_by_tg_id(chat_id)
-    if owner:
-        if connection_id and owner.connection_id != connection_id:
-            await crud_user.update_connection_id(str(owner.tgID), connection_id)
-            owner.connection_id = connection_id
-            logger.debug(
-                f"business: refreshed connection_id for owner_id={owner.tgID} via direct user match"
-            )
-        resolved_owner = _owner_from_user(owner)
-        _cache_owner(
-            resolved_owner,
-            connection_id=connection_id,
-            chat_id=chat_id,
-            sender_id=sender_id,
-        )
-        return resolved_owner
-
-    if sender_id:
-        owner = await crud_user.get_user_by_tg_id(sender_id)
-        if owner:
-            if connection_id and owner.connection_id != connection_id:
-                await crud_user.update_connection_id(str(owner.tgID), connection_id)
-                owner.connection_id = connection_id
-                logger.debug(
-                    f"business: refreshed connection_id for owner_id={owner.tgID} via sender_id={sender_id}"
-                )
-            resolved_owner = _owner_from_user(owner)
-            _cache_owner(
-                resolved_owner,
-                connection_id=connection_id,
-                chat_id=chat_id,
-                sender_id=sender_id,
-            )
-            return resolved_owner
-
-    chat = await crud_chat.get_chat_by_chat_id(chat_id)
-    if not chat:
         return None
 
-    owner = await crud_user.get_user_by_tg_id(str(chat.user_id))
+    owner_ids = await crud_chat.get_active_user_ids_by_chat_id(chat_id)
+    if not owner_ids:
+        return None
+    if len(owner_ids) > 1:
+        logger.warning(
+            "business: ambiguous owner resolution for chat_id={}, sender_id={}, connection_id={}, candidates={}",
+            chat_id,
+            sender_id,
+            connection_id,
+            owner_ids,
+        )
+        return None
+
+    owner = await crud_user.get_user_by_tg_id(owner_ids[0])
     if not owner:
         return None
 
@@ -482,10 +436,27 @@ async def _resolve_owner(
     _cache_owner(
         resolved_owner,
         connection_id=connection_id,
-        chat_id=chat_id,
-        sender_id=sender_id,
     )
     return resolved_owner
+
+
+def _is_owner_message(from_id: str, owner_id: str) -> bool:
+    return from_id == owner_id
+
+
+def _is_admin_tg_id(tg_id: str | None) -> bool:
+    return bool(tg_id and settings.ADMIN_TG_ID and tg_id == settings.ADMIN_TG_ID)
+
+
+def _is_excluded_external_sender(
+    *,
+    sender_id: str | None,
+    chat_id: str,
+    owner_id: str,
+) -> bool:
+    if owner_id == settings.ADMIN_TG_ID:
+        return False
+    return _is_admin_tg_id(sender_id) or _is_admin_tg_id(chat_id)
 
 
 @router.business_connection()
@@ -497,6 +468,11 @@ async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
     if conn.is_enabled:
         logger.success(f"🤖 Бот подключён к бизнес-аккаунту пользователя {user_id}")
 
+        await crud_user.add_user(
+            tg_id=user_id,
+            tg_login=_business_user_login(user),
+        )
+
         # Активируем чаты и обновляем connection_id
         await crud_chat.activate_all_by_user_id(user_id)
         await crud_user.update_connection_id(
@@ -506,8 +482,6 @@ async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
         _cache_owner(
             OwnerRef(tg_id=user_id, connection_id=connection_id),
             connection_id=connection_id,
-            chat_id=user_id,
-            sender_id=user_id,
         )
 
         if not await _ensure_trial_access(bot, user_id, force_notice=True):
@@ -530,8 +504,6 @@ async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
         logger.warning(f"🚫 Бот отключён от бизнес-аккаунта пользователя {user_id}")
         _drop_owner_cache(
             connection_id=connection_id,
-            chat_id=user_id,
-            sender_id=user_id,
         )
 
         # Деактивируем чаты
@@ -552,6 +524,19 @@ async def on_business_connection_change(conn: BusinessConnection, bot: Bot):
 async def media_with_timer(message: types.Message, bot: Bot, owner_id: str):
     reply = message.reply_to_message
     if not reply:
+        return
+
+    reply_from_id = str(reply.from_user.id) if reply.from_user else None
+    if _is_excluded_external_sender(
+        sender_id=reply_from_id,
+        chat_id=str(reply.chat.id),
+        owner_id=owner_id,
+    ):
+        logger.info(
+            "media: skip capture for excluded sender_id={} owner_id={}",
+            reply_from_id,
+            owner_id,
+        )
         return
 
     if reply.from_user and (str(reply.from_user.id) == str(owner_id)):
@@ -691,12 +676,23 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
     if not await _ensure_trial_access(bot, owner_id):
         return
 
-    # Если пишет клиент — обрабатываем медиа-ответы и выходим
-    if chat_id != from_id:
-        await _mirror_client_attachment(message, bot, owner_id)
+    if _is_owner_message(from_id, owner_id):
         await media_with_timer(message, bot, owner_id)
         return
 
+    if _is_excluded_external_sender(
+        sender_id=from_id,
+        chat_id=chat_id,
+        owner_id=owner_id,
+    ):
+        logger.info(
+            "business: skip mirrored/stored message from excluded sender_id={} for owner_id={}",
+            from_id,
+            owner_id,
+        )
+        return
+
+    await _mirror_client_attachment(message, bot, owner_id)
     await _ensure_chat_registered(chat_id=chat_id, user_id=owner_id)
     encrypted_content = encrypt(message.text or message.caption or "")
     await crud_message.add_message(
@@ -730,6 +726,18 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
         return
     owner_id: str = owner.tg_id
     if not await _ensure_trial_access(bot, owner_id):
+        return
+
+    if _is_excluded_external_sender(
+        sender_id=editor_id,
+        chat_id=chat_id,
+        owner_id=owner_id,
+    ):
+        logger.info(
+            "edited: skip notification for excluded sender_id={} owner_id={}",
+            editor_id,
+            owner_id,
+        )
         return
 
     new_content_raw: str = message.text or message.caption or ""
@@ -812,6 +820,19 @@ async def deleted_business_message(
     owner_id: str = owner.tg_id
     if not await _ensure_trial_access(bot, owner_id):
         return
+
+    if _is_excluded_external_sender(
+        sender_id=None,
+        chat_id=chat_id,
+        owner_id=owner_id,
+    ):
+        logger.info(
+            "deleted: skip notification for excluded chat_id={} owner_id={}",
+            chat_id,
+            owner_id,
+        )
+        return
+
     client_name, client_username = await _resolve_client_identity(bot, chat_id)
     stored_messages = await crud_message.get_messages_by_ids(
         msg_ids=msg_ids,

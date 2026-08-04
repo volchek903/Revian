@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import distinct, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models.chat import Chat
@@ -29,6 +29,16 @@ class CRUDChat:
             )
             await session.execute(stmt)
             await session.commit()
+
+    async def get_active_user_ids_by_chat_id(self, chat_id: str) -> list[str]:
+        async with get_session() as session:
+            result = await session.execute(
+                select(distinct(Chat.user_id)).where(
+                    Chat.chat_id == chat_id,
+                    Chat.status.is_(True),
+                )
+            )
+            return [str(user_id) for user_id in result.scalars().all() if user_id is not None]
 
     async def activate_all_by_user_id(self, user_id: str) -> None:
         """
