@@ -385,7 +385,44 @@ async def _resolve_owner(
     connection_id: str | None,
     chat_id: str,
     sender_id: str | None = None,
+    bot: Bot | None = None,
 ):
+    # Telegram is the source of truth for a business connection.  The value
+    # can change when the owner edits the connection, while the local users
+    # row may still contain the previous value (or even belong to another
+    # owner after a stale deployment/cache).  Resolve the user from Telegram
+    # first whenever a connection id is available.
+    if connection_id and bot is not None:
+        try:
+            business_connection = await bot.get_business_connection(connection_id)
+            telegram_owner_id = str(business_connection.user.id)
+            telegram_owner = await crud_user.get_user_by_tg_id(telegram_owner_id)
+            if telegram_owner is None:
+                await crud_user.add_user(
+                    tg_id=telegram_owner_id,
+                    tg_login=_business_user_login(business_connection.user),
+                )
+                telegram_owner = await crud_user.get_user_by_tg_id(telegram_owner_id)
+
+            if telegram_owner is not None:
+                if telegram_owner.connection_id != connection_id:
+                    await crud_user.update_connection_id(
+                        user_id=telegram_owner_id,
+                        connection_id=connection_id,
+                    )
+                    telegram_owner.connection_id = connection_id
+                resolved_owner = _owner_from_user(telegram_owner)
+                _cache_owner(resolved_owner, connection_id=connection_id)
+                return resolved_owner
+        except Exception as exc:
+            # Keep the local lookup as a degraded-mode fallback if Telegram
+            # temporarily rejects getBusinessConnection (network/rate limit).
+            logger.warning(
+                "business: failed to resolve connection_id={} via Telegram: {}",
+                connection_id,
+                exc,
+            )
+
     owner = None
     if connection_id:
         cached_owner = _get_cached_entry(_owner_cache_by_connection, connection_id)
@@ -668,6 +705,7 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
         connection_id=connection_id,
         chat_id=chat_id,
         sender_id=from_id,
+        bot=bot,
     )
     if not owner:
         logger.error(f"business: не найден пользователь с connection_id={connection_id}")
@@ -677,7 +715,17 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
         return
 
     if _is_owner_message(from_id, owner_id):
+        # Do not mirror the owner's own message.  The only exception is the
+        # explicit protected-media capture flow: when the owner replies to a
+        # client's disappearing photo/video, media_with_timer may preserve
+        # that client's media.  It verifies the replied-to message sender and
+        # never forwards owner-owned media.
         await media_with_timer(message, bot, owner_id)
+        logger.debug(
+            "business: skip owner's own message_id={} for owner_id={}",
+            message.message_id,
+            owner_id,
+        )
         return
 
     if _is_excluded_external_sender(
@@ -718,6 +766,7 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
         connection_id=connection_id,
         chat_id=chat_id,
         sender_id=editor_id,
+        bot=bot,
     )
     if not owner:
         logger.error(
@@ -811,7 +860,7 @@ async def deleted_business_message(
     if not connection_id:
         logger.warning(f"deleted: business_connection_id отсутствует для chat_id={chat_id}")
 
-    owner = await _resolve_owner(connection_id=connection_id, chat_id=chat_id)
+    owner = await _resolve_owner(connection_id=connection_id, chat_id=chat_id, bot=bot)
     if not owner:
         logger.error(
             f"deleted: нет user c connection_id={connection_id} и chat_id={chat_id}"
