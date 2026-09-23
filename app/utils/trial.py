@@ -26,10 +26,23 @@ def initial_trial_end(started_at: datetime | None = None) -> datetime:
 
 
 def extend_trial(current_end: datetime | None, *, from_time: datetime | None = None) -> datetime:
+    return extend_access(
+        current_end,
+        hours=settings.REFERRAL_BONUS_HOURS,
+        from_time=from_time,
+    )
+
+
+def extend_access(
+    current_end: datetime | None,
+    *,
+    hours: int,
+    from_time: datetime | None = None,
+) -> datetime:
     now = normalize_dt(from_time) or now_in_app_tz()
     current = normalize_dt(current_end)
     anchor = current if current and current > now else now
-    return anchor + timedelta(hours=settings.REFERRAL_BONUS_HOURS)
+    return anchor + timedelta(hours=hours)
 
 
 @dataclass(frozen=True)

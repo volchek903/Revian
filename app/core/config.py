@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     MEDIA_DOWNLOAD_CONCURRENCY: int = Field(default=2, ge=1)
     MAX_MEDIA_SIZE_MB: int = Field(default=20, ge=1)
     TRIAL_PERIOD_HOURS: int = Field(default=48, ge=1)
-    REFERRAL_BONUS_HOURS: int = Field(default=48, ge=1)
+    REFERRAL_BONUS_HOURS: int = Field(default=168, ge=1)
     TRIAL_NOTICE_COOLDOWN_MINUTES: int = Field(default=60, ge=1)
     TRIAL_SUPPORT_HANDLE: str = "@volchek903"
     ADMIN_TG_ID: str | None = None

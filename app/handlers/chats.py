@@ -11,6 +11,7 @@ from aiogram.types import BufferedInputFile, BusinessConnection
 from loguru import logger
 
 from app.core.config import settings
+from app.keyboards.bot_keyboard import subscription_plans_kb
 from app.repository.chat import crud_chat
 from app.repository.message import crud_message
 from app.repository.user import crud_user
@@ -49,7 +50,7 @@ def _build_trial_expired_text(user) -> str:
     return (
         "⛔ <b>Испытательный срок закончился</b>\n\n"
         "Новые сообщения больше не записываются, а уведомления по этому чату остановлены.\n\n"
-        f"Чтобы получить ещё {settings.REFERRAL_BONUS_HOURS} часов бесплатно, "
+        "Чтобы получить ещё 7 дней бесплатно, "
         "пригласи друга по своему коду:\n"
         f"<code>{html_escape(user.ref_code)}</code>\n\n"
         f"Или обратись к владельцу {html_escape(settings.TRIAL_SUPPORT_HANDLE)}."
@@ -81,6 +82,7 @@ async def _ensure_trial_access(bot: Bot, owner_id: str, *, force_notice: bool = 
             chat_id=owner_id,
             text=_build_trial_expired_text(user),
             parse_mode="HTML",
+            reply_markup=subscription_plans_kb(),
         )
     except Exception as e:
         logger.warning(
@@ -696,6 +698,19 @@ async def handle_business_message(message: types.Message, bot: Bot) -> None:
     if not message.from_user:
         logger.warning(f"business: message.from_user отсутствует для chat_id={chat_id}")
         return
+
+    # Do not mirror or persist messages sent by bots.  In particular, this
+    # prevents the bot's own business messages from being treated as client
+    # messages and starting a forwarding loop.
+    if message.from_user.is_bot:
+        logger.debug(
+            "business: skip bot message_id={} from_user={} chat_id={}",
+            message.message_id,
+            message.from_user.id,
+            chat_id,
+        )
+        return
+
     from_id: str = str(message.from_user.id)
 
     if not connection_id:
@@ -758,6 +773,15 @@ async def edited_business_message(message: types.Message, bot: Bot) -> None:
     msg_id: str = str(message.message_id)
     connection_id: str | None = message.business_connection_id
     editor_id: str | None = str(message.from_user.id) if message.from_user else None
+
+    if message.from_user and message.from_user.is_bot:
+        logger.debug(
+            "edited: skip bot message_id={} from_user={} chat_id={}",
+            msg_id,
+            message.from_user.id,
+            chat_id,
+        )
+        return
 
     if not connection_id:
         logger.warning(f"edited: business_connection_id отсутствует для chat_id={chat_id}")

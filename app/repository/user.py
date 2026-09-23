@@ -10,6 +10,7 @@ from app.models.user import User
 from app.utils.trial import (
     REFERRAL_STATUS_ACTIVE,
     extend_trial,
+    extend_access,
     initial_trial_end,
     normalize_dt,
     now_in_app_tz,
@@ -154,6 +155,19 @@ class CRUDUser:
             user.lifetime_activated_at = now_in_app_tz()
             await session.commit()
             return 1
+
+    async def extend_paid_access(self, tg_id: str, hours: int) -> datetime | None:
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.tgID == tg_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                return None
+            if bool(getattr(user, "lifetime_access", False)):
+                return None
+
+            user.trial_ends_at = extend_access(user.trial_ends_at, hours=hours)
+            await session.commit()
+            return normalize_dt(user.trial_ends_at)
 
     async def get_referral_summary(self, tg_id: str):
         async with get_session() as session:

@@ -1,5 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.utils.subscriptions import SUBSCRIPTION_PLANS
+
 
 start_continue_kb = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -27,6 +29,7 @@ welcome_revian_kb = InlineKeyboardMarkup(
                 callback_data="no_referral",
             )
         ],
+        [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
     ]
 )
 
@@ -41,6 +44,7 @@ has_referral_kb = InlineKeyboardMarkup(
                 callback_data="no_referral",
             )
         ],
+        [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
     ]
 )
 
@@ -53,6 +57,7 @@ no_referral_from_has_kb = InlineKeyboardMarkup(
             )
         ],
         [InlineKeyboardButton(text="🏠 Меню", callback_data="main_menu")],
+        [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
     ]
 )
 
@@ -98,6 +103,7 @@ def back_to_choice_kb() -> InlineKeyboardMarkup:
                     callback_data="no_referral",
                 )
             ],
+            [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
         ]
     )
 
@@ -116,6 +122,10 @@ def main_menu_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
                 InlineKeyboardButton(text="🎁 Промокод", callback_data="has_referral"),
+            ],
+            [
+                InlineKeyboardButton(text="💳 Подписка", callback_data="subscription"),
+                InlineKeyboardButton(text="👥 Пригласить друга", callback_data="referral"),
             ],
             [
                 InlineKeyboardButton(text="📘 Подключение", callback_data="instruction"),
@@ -138,6 +148,7 @@ def instruction_kb() -> InlineKeyboardMarkup:
                     callback_data="has_referral",
                 )
             ],
+            [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]
     )
@@ -152,6 +163,7 @@ def profile_kb() -> InlineKeyboardMarkup:
                     callback_data="has_referral",
                 )
             ],
+            [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]
     )
@@ -204,6 +216,40 @@ def retry_kb() -> InlineKeyboardMarkup:
                     callback_data="no_referral",
                 )
             ],
+            [InlineKeyboardButton(text="💳 Получить подписку", callback_data="subscription")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def subscription_plans_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📅 30 дней — 350 ⭐", callback_data="subscription_plan:month")],
+            [InlineKeyboardButton(text="📅 90 дней — 850 ⭐", callback_data="subscription_plan:quarter")],
+            [InlineKeyboardButton(text="📅 180 дней — 1400 ⭐", callback_data="subscription_plan:halfyear")],
+            [InlineKeyboardButton(text="♾ Безлимит — 2000 ⭐", callback_data="subscription_plan:unlimited")],
+            [InlineKeyboardButton(text="👥 Пригласить друга — +7 дней", callback_data="referral")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def subscription_plan_kb(plan_code: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить подписку", callback_data=f"subscription_pay:{plan_code}")],
+            [InlineKeyboardButton(text="👥 Пригласить друга — +7 дней", callback_data="referral")],
+            [InlineKeyboardButton(text="◀️ Назад к тарифам", callback_data="subscription")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+        ]
+    )
+
+
+def referral_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Купить подписку", callback_data="subscription")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]
     )

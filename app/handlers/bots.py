@@ -1,9 +1,10 @@
 from html import escape as html_escape
 from zoneinfo import ZoneInfo
 
-from aiogram import F, Router, types
+from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import LabeledPrice
 
 from app.core.config import settings
 from app.keyboards.bot_keyboard import (
@@ -20,10 +21,14 @@ from app.keyboards.bot_keyboard import (
     retry_kb,
     start_continue_kb,
     support_kb,
+    subscription_plan_kb,
+    subscription_plans_kb,
+    referral_kb,
 )
 from app.repository.user import crud_user
 from app.utils.faq_data import faq_items
 from app.utils.trial import REFERRAL_STATUS_ACTIVE, build_trial_state, normalize_dt
+from app.utils.subscriptions import SUBSCRIPTION_PLANS
 
 router = Router()
 APP_TZ = ZoneInfo(settings.APP_TZ)
@@ -94,23 +99,18 @@ def _trial_status_label(stored_user) -> str:
 
 def _start_text() -> str:
     return (
-        "<b>Revian</b>\n\n"
-        "Приватный помощник для бизнес-переписки в Telegram.\n\n"
-        "Ниже находится инструкция по подключению и использованию бота.\n\n"
-        f"<b>Тестовый период:</b> {settings.TRIAL_PERIOD_HOURS} часов полного доступа.\n"
-        "После этого доступ можно продлить с помощью реферальной системы.\n"
-        f"За каждого нового реферала ты получаешь ещё {settings.REFERRAL_BONUS_HOURS} часов пользования ботом.\n\n"
-        "Топ рефералов получает промокоды раз в месяц.\n"
-        "Промокоды дают дополнительное увеличение времени пользования ботом.\n\n"
-        "<b>Что умею:</b>\n"
-        "• фиксирую удалённые сообщения\n"
-        "• показываю, что изменили после редактирования\n"
-        "• помогаю не потерять исчезающие фото и видео\n"
-        "• работаю тихо в фоне после подключения\n\n"
-        "<b>Приватность:</b>\n"
-        "• данные шифруются\n"
-        "• доступ к содержимому есть только у тебя\n\n"
-        "Нажми кнопку ниже, и я покажу, как подключить меня за минуту."
+        "<b>Revian — спокойный контроль бизнес-переписки</b>\n\n"
+        "Я сохраняю важное до того, как оно исчезнет: удалённые сообщения, правки и поддержанные медиа.\n\n"
+        f"<b>Бесплатно:</b> {settings.TRIAL_PERIOD_HOURS} часов полного доступа.\n\n"
+        "<b>Как это работает</b>\n"
+        "1. Ты сам подключаешь Revian к бизнес-аккаунту.\n"
+        "2. Выбираешь чаты и разрешения в Telegram.\n"
+        "3. Я работаю только в выбранных чатах и отправляю копии тебе в личный диалог с ботом.\n\n"
+        "<b>Что ты контролируешь</b>\n"
+        "• подключение можно отключить в любой момент\n"
+        "• данные хранятся в зашифрованном виде\n"
+        "• подписка и реферальные бонусы продлевают доступ без скрытых условий\n\n"
+        "Начни с инструкции — подключение занимает около минуты."
     )
 
 
@@ -120,49 +120,50 @@ def _returning_user_text(user: types.User, stored_user) -> str:
         f"<b>Доступ:</b> {_trial_status_label(stored_user)}\n"
         f"<b>Статус подключения:</b> {_connection_status(stored_user)}\n"
         f"<b>Твой промокод:</b> <code>{html_escape(stored_user.ref_code)}</code>\n\n"
-        "Нужный раздел уже в меню ниже."
+        "Пригласи друга и получи +7 дней доступа — кнопка есть в меню ниже."
     )
 
 
 def _instruction_text() -> str:
     return (
-        "<b>Как подключить Revian</b>\n\n"
+        "<b>Подключение Revian</b>\n\n"
         "1. Открой настройки Telegram.\n"
-        "2. Перейди в раздел <code>Chat Automation</code>.\n"
-        "3. Нажми <b>«Добавить бота»</b> и выбери <code>@RevianBot</code>.\n"
-        "4. Разреши доступ к сообщениям и сохрани настройки.\n\n"
-        "<b>После подключения Revian сможет:</b>\n"
-        "• сообщать об удалении сообщений\n"
-        "• сохранять исходный текст после правок\n"
-        "• перехватывать важные исчезающие медиа\n\n"
-        "<i>В старых клиентах Telegram этот раздел может называться иначе, "
-        "но логика та же: подключение бота для автоматизации чатов.</i>"
+        "2. Перейди в <code>Chat Automation</code> / «Подключённые боты».\n"
+        "3. Выбери «Добавить бота» и найди <code>@RevianBot</code>.\n"
+        "4. Разреши чтение сообщений и выбери нужные чаты.\n\n"
+        "<b>После подключения я смогу:</b>\n"
+        "• прислать тебе медиа от собеседника сразу;\n"
+        "• сохранить текст до его удаления или редактирования;\n"
+        "• сообщить, что именно изменилось.\n\n"
+        "Я не подключаюсь к чатам сам, не пишу собеседникам и не работаю вне выбранных тобой чатов.\n\n"
+        "В любой момент отключи Revian там же, в настройках Telegram."
     )
 
 
 def _main_menu_text() -> str:
     return (
         "<b>Главное меню Revian</b>\n\n"
-        "Здесь можно проверить статус подключения, открыть инструкцию, "
-        "активировать промокод или быстро перейти в FAQ и поддержку."
+        "Здесь можно проверить статус подключения, купить подписку, "
+        "пригласить друга, активировать промокод или открыть FAQ и поддержку."
     )
 
 
 def _support_text() -> str:
     return (
         "<b>Поддержка</b>\n\n"
-        "Если что-то работает не так или нужен ответ по подключению, "
-        "пиши через официальный канал проекта.\n\n"
-        "Там публикуются обновления и можно быстро связаться с командой."
+        "Если нужна помощь с подключением, оплатой или удалением данных, "
+        "напиши владельцу проекта.\n\n"
+        f"Контакт: {html_escape(settings.TRIAL_SUPPORT_HANDLE)}\n"
+        "Обычно отвечаем в течение рабочего дня."
     )
 
 
 def _about_text() -> str:
     return (
-        "<b>О проекте</b>\n\n"
-        "Revian помогает владельцу бизнес-аккаунта не терять важные изменения в переписке: "
-        "удаления, правки и исчезающие медиа.\n\n"
-        "Проект сфокусирован на двух вещах: приватности и спокойном фоновом контроле."
+        "<b>О Revian</b>\n\n"
+        "Revian — инструмент для владельцев Telegram Business, которым важно не терять контекст переписки.\n\n"
+        "Я не заменяю Telegram и не вмешиваюсь в разговоры: только фиксирую выбранные события и отправляю результат владельцу.\n\n"
+        "Принцип проекта простой: понятное подключение, прозрачная оплата и контроль данных у пользователя."
     )
 
 
@@ -171,6 +172,31 @@ def _faq_intro_text() -> str:
         "<b>FAQ</b>\n\n"
         "Собрал короткие ответы на самые частые вопросы о приватности, подключении и работе бота."
     )
+
+
+def _subscription_intro_text() -> str:
+    return (
+        "<b>Подписка Revian</b>\n\n"
+        "Продли доступ к контролю бизнес-переписки: удалённым сообщениям, правкам и исчезающим медиа.\n\n"
+        "Выбери срок подписки ниже. Оплата проходит в Telegram Stars.\n\n"
+        "Можно также пригласить друга и получить +7 дней бесплатно."
+    )
+
+
+def _subscription_plan_text(plan) -> str:
+    benefit = "доступ без ограничения срока" if plan.code == "unlimited" else f"полный доступ на {plan.period}"
+    return (
+        f"<b>{plan.title}</b>\n\n"
+        f"Стоимость: <b>{plan.stars} ⭐</b>\n"
+        f"Что получишь: {benefit}.\n"
+        f"Преимущество: {plan.value}.\n\n"
+        "До подтверждения ты увидишь сумму в Telegram. Доступ активируется только после успешной оплаты."
+    )
+
+
+async def _referral_link(bot, ref_code: str) -> str:
+    bot_user = await bot.get_me()
+    return f"https://t.me/{bot_user.username}?start=ref_{ref_code}"
 
 
 @router.message(F.text == "/userstats")
@@ -190,14 +216,27 @@ async def handle_user_stats(message: types.Message):
     )
 
 
-@router.message(F.text == "/start")
+@router.message(F.text.startswith("/start"))
 async def handle_start_in_business(message: types.Message):
     tg_id = str(message.from_user.id)
     tg_login = message.from_user.username or message.from_user.full_name
+    start_arg = (message.text or "").split(maxsplit=1)[1].strip() if " " in (message.text or "") else ""
 
     user = await crud_user.get_user_by_tg_id(tg_id)
 
     if user:
+        if start_arg.lower().startswith("ref_"):
+            result = await crud_user.update_referral_user(
+                tg_id=tg_id,
+                ref_code=start_arg[4:].strip().upper(),
+            )
+            if result == 1:
+                await message.answer(
+                    "🎉 Реферальный код принят! Пригласивший тебя пользователь получил +7 дней доступа.\n\n"
+                    "Спасибо, что присоединился по приглашению друга.",
+                    reply_markup=main_menu_kb(),
+                )
+                return
         await message.answer(
             _returning_user_text(message.from_user, user),
             reply_markup=main_menu_kb(),
@@ -206,6 +245,19 @@ async def handle_start_in_business(message: types.Message):
         return
 
     await crud_user.add_user(tg_id, tg_login)
+
+    if start_arg.lower().startswith("ref_"):
+        result = await crud_user.update_referral_user(
+            tg_id=tg_id,
+            ref_code=start_arg[4:].strip().upper(),
+        )
+        if result == 1:
+            await message.answer(
+                f"🎉 Реферальный код принят! Пригласивший друг получил +{settings.REFERRAL_BONUS_HOURS} часов, а ты можешь продолжить настройку Revian.",
+                reply_markup=start_continue_kb,
+                parse_mode="HTML",
+            )
+            return
 
     await message.answer(
         _start_text(),
@@ -327,7 +379,7 @@ async def handle_referral_code_input(message: types.Message, state: FSMContext):
         await message.answer(
             f"<b>Промокод принят</b>\n\n"
             f"Код <code>{html_escape(code)}</code> успешно активирован.\n"
-            f"Пользователь, который тебя пригласил, получил ещё {settings.REFERRAL_BONUS_HOURS} часов доступа.",
+            "Пользователь, который тебя пригласил, получил ещё 7 дней доступа.",
             reply_markup=next_to_menu_kb,
             parse_mode="HTML",
         )
@@ -368,6 +420,141 @@ async def show_support(callback: types.CallbackQuery):
         parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=support_kb(),
+    )
+
+
+@router.callback_query(F.data == "subscription")
+async def show_subscription_plans(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer(
+        _subscription_intro_text(),
+        parse_mode="HTML",
+        reply_markup=subscription_plans_kb(),
+    )
+
+
+@router.callback_query(F.data == "referral")
+async def show_referral(callback: types.CallbackQuery):
+    await callback.answer()
+    user = await crud_user.get_user_by_tg_id(str(callback.from_user.id))
+    if not user:
+        await callback.message.answer("Нажми /start, чтобы создать профиль.")
+        return
+
+    link = await _referral_link(callback.bot, user.ref_code)
+    await callback.message.delete()
+    await callback.message.answer(
+        "<b>Пригласи друга и получи 7 дней бесплатно</b>\n\n"
+        "Отправь другу эту ссылку. Когда он впервые активирует её, ты получишь +7 дней доступа.\n\n"
+        f"<b>Твой код:</b> <code>{html_escape(user.ref_code)}</code>\n"
+        f"<b>Твоя ссылка:</b>\n<code>{html_escape(link)}</code>\n\n"
+        "Один приглашённый пользователь может активировать только один реферальный код.",
+        parse_mode="HTML",
+        reply_markup=referral_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("subscription_plan:"))
+async def show_subscription_plan(callback: types.CallbackQuery):
+    plan_code = callback.data.split(":", 1)[1]
+    plan = SUBSCRIPTION_PLANS.get(plan_code)
+    if not plan:
+        await callback.answer("Тариф не найден", show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.delete()
+    await callback.message.answer(
+        _subscription_plan_text(plan),
+        parse_mode="HTML",
+        reply_markup=subscription_plan_kb(plan.code),
+    )
+
+
+@router.callback_query(F.data.startswith("subscription_pay:"))
+async def create_subscription_invoice(callback: types.CallbackQuery):
+    plan_code = callback.data.split(":", 1)[1]
+    plan = SUBSCRIPTION_PLANS.get(plan_code)
+    if not plan:
+        await callback.answer("Тариф не найден", show_alert=True)
+        return
+
+    payload = f"revian_sub:{plan.code}:{callback.from_user.id}"
+    await callback.answer("Формирую счёт…")
+    try:
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=plan.title,
+            description=(
+                f"Revian: {('безлимитный доступ' if plan.code == 'unlimited' else f'доступ на {plan.period}')}"
+            ),
+            payload=payload,
+            currency="XTR",
+            prices=[LabeledPrice(label=plan.title, amount=plan.stars)],
+            provider_token="",
+        )
+        await callback.bot.send_message(
+            chat_id=callback.from_user.id,
+            text="⏳ Ожидаем оплату. После подтверждения Stars доступ продлится автоматически.",
+        )
+    except Exception:
+        await callback.message.answer(
+            "Не удалось создать счёт. Попробуй ещё раз через несколько секунд.",
+            reply_markup=subscription_plan_kb(plan.code),
+        )
+
+
+@router.pre_checkout_query()
+async def process_pre_checkout_query(query: types.PreCheckoutQuery, bot: Bot):
+    parts = (query.invoice_payload or "").split(":")
+    if len(parts) != 3 or parts[0] != "revian_sub" or parts[2] != str(query.from_user.id):
+        await query.answer(ok=False, error_message="Счёт устарел. Создай новый счёт в разделе подписки.")
+        await bot.send_message(query.from_user.id, "❌ Оплата не прошла: счёт устарел. Создай новый счёт.")
+        return
+
+    plan = SUBSCRIPTION_PLANS.get(parts[1])
+    if not plan or query.currency != "XTR" or query.total_amount != plan.stars:
+        await query.answer(ok=False, error_message="Тариф изменился. Создай новый счёт.")
+        await bot.send_message(query.from_user.id, "❌ Оплата не прошла: тариф изменился. Создай новый счёт.")
+        return
+
+    await query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def process_successful_payment(message: types.Message):
+    payment = message.successful_payment
+    parts = (payment.invoice_payload or "").split(":")
+    if len(parts) != 3 or parts[0] != "revian_sub" or parts[2] != str(message.from_user.id):
+        await message.answer("Платёж получен, но его тариф не удалось определить. Обратись в поддержку.")
+        return
+
+    plan = SUBSCRIPTION_PLANS.get(parts[1])
+    if not plan:
+        await message.answer("Платёж получен, но тариф не найден. Обратись в поддержку.")
+        return
+
+    if plan.code == "unlimited":
+        result = await crud_user.activate_lifetime_access(str(message.from_user.id))
+        if result == -1:
+            await message.answer("У тебя уже активирован безлимитный доступ ♾")
+        elif result != 1:
+            await message.answer("Платёж прошёл, но профиль не найден. Обратись в поддержку.")
+        else:
+            await message.answer("🎉 Оплата прошла! Поздравляю — безлимитный доступ активирован.")
+        return
+
+    ends_at = await crud_user.extend_paid_access(str(message.from_user.id), plan.hours)
+    if ends_at is None:
+        await message.answer("Платёж прошёл, но профиль не найден. Обратись в поддержку.")
+        return
+
+    await message.answer(
+        f"🎉 Оплата прошла! Подписка активирована на {plan.period}.\n"
+        f"Доступ продлён до <b>{_format_dt(ends_at)}</b>.",
+        parse_mode="HTML",
+        reply_markup=main_menu_kb(),
     )
 
 
