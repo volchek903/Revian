@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import suppress
 from html import escape as html_escape
 from zoneinfo import ZoneInfo
 
@@ -32,6 +34,26 @@ from app.utils.subscriptions import SUBSCRIPTION_PLANS
 
 router = Router()
 APP_TZ = ZoneInfo(settings.APP_TZ)
+SUBSCRIPTION_PAYMENT_TIMEOUT = 10 * 60
+# user_id -> (timeout task, bot, waiting message id, invoice payload, deadline)
+_pending_subscription_payments: dict[int, tuple[asyncio.Task, Bot, int, str, float]] = {}
+
+
+async def _expire_subscription_payment(user_id: int, payload: str, deadline: float) -> None:
+    """Mark an unpaid invoice as cancelled after the user-facing grace period."""
+    await asyncio.sleep(max(deadline - asyncio.get_running_loop().time(), 0))
+    pending = _pending_subscription_payments.get(user_id)
+    if not pending or pending[0] is not asyncio.current_task() or pending[3] != payload:
+        return
+
+    _, bot, message_id, _, _ = pending
+    _pending_subscription_payments.pop(user_id, None)
+    with suppress(Exception):
+        await bot.edit_message_text(
+            chat_id=user_id,
+            message_id=message_id,
+            text="❌ Оплата не подтверждена за 10 минут, счёт отменён. Создай новый счёт в разделе подписки.",
+        )
 
 
 class ReferralInput(StatesGroup):
@@ -494,9 +516,26 @@ async def create_subscription_invoice(callback: types.CallbackQuery):
             prices=[LabeledPrice(label=plan.title, amount=plan.stars)],
             provider_token="",
         )
-        await callback.bot.send_message(
+        waiting_message = await callback.bot.send_message(
             chat_id=callback.from_user.id,
             text="⏳ Ожидаем оплату. После подтверждения Stars доступ продлится автоматически.",
+        )
+        user_id = callback.from_user.id
+        # Keep only the latest invoice for this user. A new invoice supersedes an
+        # older one and prevents an old timeout from editing the new message.
+        previous = _pending_subscription_payments.pop(user_id, None)
+        if previous:
+            previous[0].cancel()
+        deadline = asyncio.get_running_loop().time() + SUBSCRIPTION_PAYMENT_TIMEOUT
+        timeout_task = asyncio.create_task(
+            _expire_subscription_payment(user_id, payload, deadline)
+        )
+        _pending_subscription_payments[user_id] = (
+            timeout_task,
+            callback.bot,
+            waiting_message.message_id,
+            payload,
+            deadline,
         )
     except Exception:
         await callback.message.answer(
@@ -507,6 +546,16 @@ async def create_subscription_invoice(callback: types.CallbackQuery):
 
 @router.pre_checkout_query()
 async def process_pre_checkout_query(query: types.PreCheckoutQuery, bot: Bot):
+    pending = _pending_subscription_payments.get(query.from_user.id)
+    if (
+        not pending
+        or pending[3] != query.invoice_payload
+        or pending[4] <= asyncio.get_running_loop().time()
+    ):
+        await query.answer(ok=False, error_message="Счёт истёк. Создай новый счёт в разделе подписки.")
+        await bot.send_message(query.from_user.id, "❌ Оплата не прошла: время ожидания истекло. Создай новый счёт.")
+        return
+
     parts = (query.invoice_payload or "").split(":")
     if len(parts) != 3 or parts[0] != "revian_sub" or parts[2] != str(query.from_user.id):
         await query.answer(ok=False, error_message="Счёт устарел. Создай новый счёт в разделе подписки.")
@@ -525,6 +574,17 @@ async def process_pre_checkout_query(query: types.PreCheckoutQuery, bot: Bot):
 @router.message(F.successful_payment)
 async def process_successful_payment(message: types.Message):
     payment = message.successful_payment
+    pending = _pending_subscription_payments.pop(message.from_user.id, None)
+    if pending:
+        pending[0].cancel()
+        with suppress(asyncio.CancelledError):
+            await pending[0]
+        with suppress(Exception):
+            await pending[1].edit_message_text(
+                chat_id=message.from_user.id,
+                message_id=pending[2],
+                text="✅ Оплата подтверждена. Доступ продлевается автоматически…",
+            )
     parts = (payment.invoice_payload or "").split(":")
     if len(parts) != 3 or parts[0] != "revian_sub" or parts[2] != str(message.from_user.id):
         await message.answer("Платёж получен, но его тариф не удалось определить. Обратись в поддержку.")
